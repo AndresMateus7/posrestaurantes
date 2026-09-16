@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panel de Mesero — Plantilla</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="canal-tiempo-real.js"></script>
+<script src="datos-compartidos.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* Mismo mecanismo de tema que menu-cliente.html / admin.html — ver ese
+     archivo para el detalle. Aquí solo se usa para marca (header, botones
+     primarios); los colores de ESTADO de mesa son semánticos fijos (abajo),
+     no dependen del tema, para que el personal no tenga que re-aprenderlos
+     si el restaurante cambia de colores. */
+  :root {
+    --color-primario: #DC2626; --color-secundario: #1F2937;
+    --color-fondo: #F3F4F6; --color-texto: #111827; --color-superficie: #FFFFFF;
+    --fuente: 'Inter', sans-serif;
+  }
+  body { background: var(--color-fondo); color: var(--color-texto); font-family: var(--fuente); }
+  .btn-primario { background: var(--color-primario); }
+  .texto-primario { color: var(--color-primario); }
+  @keyframes destacar { 0%,100% { background: white; } 30% { background: #FEF3C7; } }
+  .llamado-nuevo { animation: destacar 1.4s ease-out 2; }
+  @keyframes aparecer { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .toast-anim { animation: aparecer .2s ease-out; }
+  .animar-entrada { animation: aparecer .18s ease-out; }
+</style>
+</head>
+<body class="min-h-screen pb-10">
+
+  <header class="sticky top-0 z-20 shadow-sm" style="background: var(--color-superficie);">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+      <div id="logo" class="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style="background: var(--color-secundario);">RL</div>
+      <div>
+        <h1 class="font-semibold leading-tight">Panel de Mesero</h1>
+        <p id="subtitulo" class="text-xs opacity-60">— turno de Camila</p>
+      </div>
+      <span id="badge-rota-qr" class="ml-auto text-xs bg-black/5 rounded-full px-3 py-1">rota_qr: <b>false</b></span>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-5 space-y-6">
+
+    <!-- ============ Bandeja de llamados ============ -->
+    <section>
+      <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Llamados pendientes</h2>
+      <div id="lista-llamados" class="space-y-2"></div>
+      <p id="sin-llamados" class="text-sm opacity-50 hidden">No hay llamados pendientes. 👍</p>
+    </section>
+
+    <!-- ============ Mapa de mesas ============ -->
+    <section>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">Mapa de mesas</h2>
+        <div class="flex gap-3 text-[11px]">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-gray-300"></span>Libre</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-400"></span>Ocupada</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-400"></span>Servido</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>Cuenta</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span>Reservada</span>
+        </div>
+      </div>
+      <div id="grid-mesas" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"></div>
+    </section>
+  </main>
+
+  <!-- ============ Modal detalle de mesa ============ -->
+  <div id="modal-mesa" class="fixed inset-0 z-40 hidden">
+    <div class="absolute inset-0 bg-black/50" data-cerrar-modal></div>
+    <div class="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-md max-h-[85vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl animar-entrada" style="background: var(--color-superficie);">
+      <div class="p-5" id="contenido-modal-mesa"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-full text-white text-sm shadow-lg toast-anim" style="background: var(--color-secundario);"></div>
+
+<script>
+let db = cargarDB();
+let mesaModalAbierta = null;
+
+const ESTILO_ESTADO = {
+  libre:              { label: 'Libre',            clase: 'bg-gray-100 border-gray-300 text-gray-600' },
+  ocupada:            { label: 'Ocupada',          clase: 'bg-blue-50 border-blue-400 text-blue-700' },
+  pedido_servido:     { label: 'Pedido servido',   clase: 'bg-green-50 border-green-400 text-green-700' },
+  cuenta_solicitada:  { label: 'Pidió la cuenta',  clase: 'bg-amber-50 border-amber-400 text-amber-800' },
+  reservada:          { label: 'Reservada',        clase: 'bg-purple-50 border-purple-400 text-purple-700' },
+};
+const ETIQUETA_ITEM = { pendiente: 'Pendiente', en_preparacion: 'En preparación', listo: 'Listo', entregado: 'Entregado' };
+const formatoCOP = (v) => '$' + v.toLocaleString('es-CO');
+
+function itemsDeMesa(numero) {
+  return db.itemsPedido.filter((i) => i.mesaNumero === numero && i.estado !== 'entregado');
+}
+function totalMesa(numero) {
+  return db.itemsPedido.filter((i) => i.mesaNumero === numero).reduce((acc, it) => {
+    const extras = it.adicionales.reduce((a, ad) => a + ad.precioUnitario * ad.cantidad, 0);
+    return acc + (it.precioUnitario * it.cantidad) + extras;
+  }, 0);
+}
+
+function renderLlamados(idsNuevos) {
+  idsNuevos = idsNuevos || new Set();
+  const cont = document.getElementById('lista-llamados');
+  document.getElementById('sin-llamados').classList.toggle('hidden', db.llamados.length > 0);
+  cont.innerHTML = db.llamados.map((l) => `
+    <div class="flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-4 py-2.5 shadow-sm ${idsNuevos.has(l.id) ? 'llamado-nuevo' : ''}">
+      <span class="text-xl">${l.tipo === 'llamar_mesero' ? '🛎️' : '🧾'}</span>
+      <div class="flex-1">
+        <p class="text-sm font-medium">${l.tipo === 'llamar_mesero' ? 'Llaman al mesero' : 'Piden la cuenta'} — Mesa ${l.mesaNumero}</p>
+        <p class="text-xs opacity-50">hace ${Math.max(0, Math.round((Date.now() - l.creadoEn) / 60000))} min</p>
+      </div>
+      <button data-atender="${l.id}" class="btn-primario text-white text-xs font-semibold rounded-full px-3 py-1.5">Atender</button>
+    </div>`).join('');
+  cont.querySelectorAll('[data-atender]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      atenderLlamado(db, btn.dataset.atender);
+      guardarDB(db);
+      renderLlamados();
+      mostrarToast('Llamado atendido ✅');
+    });
+  });
+}
+
+function renderMesas() {
+  const cont = document.getElementById('grid-mesas');
+  cont.innerHTML = db.mesas.map((m) => {
+    const estilo = ESTILO_ESTADO[m.estado];
+    return `
+    <button data-mesa="${m.numero}" class="tarjeta-mesa rounded-2xl border-2 p-4 text-left transition hover:brightness-95 ${estilo.clase}">
+      <p class="text-2xl font-bold">${m.numero}</p>
+      <p class="text-xs font-medium mt-1">${estilo.label}</p>
+      <p class="text-[11px] opacity-60 mt-0.5">${m.capacidad} puestos</p>
+    </button>`;
+  }).join('');
+  cont.querySelectorAll('[data-mesa]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalMesa(btn.dataset.mesa));
+  });
+}
+
+function abrirModalMesa(numero) {
+  mesaModalAbierta = numero;
+  const mesa = db.mesas.find((m) => m.numero === numero);
+  const cont = document.getElementById('contenido-modal-mesa');
+
+  if (mesa.estado === 'libre') {
+    cont.innerHTML = `
+      <h3 class="text-lg font-semibold">Mesa ${mesa.numero}</h3>
+      <p class="text-sm opacity-60 mt-1">${mesa.capacidad} puestos · Libre</p>
+      <p class="text-sm mt-4">${db.restaurante.rotaQr ? 'Este restaurante rota el QR: la mesa se abre sola con el primer pedido.' : 'Este restaurante usa QR fijo (<code>rota_qr=false</code>): hasta que abras la mesa, el menú del cliente no deja enviar pedidos.'}</p>
+      <button id="btn-abrir-mesa" class="w-full btn-primario text-white rounded-xl py-3 font-semibold mt-4">Abrir mesa ${mesa.numero}</button>`;
+    document.getElementById('btn-abrir-mesa').addEventListener('click', () => {
+      abrirMesa(db, mesa.numero);
+      guardarDB(db);
+      renderMesas();
+      cerrarModalMesa();
+      mostrarToast(`Mesa ${mesa.numero} abierta 🔓`);
+    });
+  } else if (mesa.estado === 'reservada') {
+    cont.innerHTML = `
+      <h3 class="text-lg font-semibold">Mesa ${mesa.numero}</h3>
+      <p class="text-sm opacity-60 mt-1">${mesa.capacidad} puestos · Reservada</p>
+      <button id="btn-abrir-mesa" class="w-full btn-primario text-white rounded-xl py-3 font-semibold mt-4">Marcar llegada y abrir</button>`;
+    document.getElementById('btn-abrir-mesa').addEventListener('click', () => {
+      abrirMesa(db, mesa.numero);
+      guardarDB(db);
+      renderMesas();
+      cerrarModalMesa();
+      mostrarToast(`Mesa ${mesa.numero} abierta 🔓`);
+    });
+  } else {
+    const items = itemsDeMesa(mesa.numero);
+    cont.innerHTML = `
+      <h3 class="text-lg font-semibold">Mesa ${mesa.numero}</h3>
+      <p class="text-sm opacity-60 mt-1">${ESTILO_ESTADO[mesa.estado].label}</p>
+      <div class="space-y-2 mt-4">
+        ${items.map((it) => `
+          <div class="flex items-center justify-between text-sm border-b border-gray-100 pb-2">
+            <span>${it.emoji} ${it.nombreProducto} <span class="opacity-50">× ${it.cantidad}</span></span>
+            <span class="text-xs px-2 py-0.5 rounded-full ${it.estado === 'listo' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">${ETIQUETA_ITEM[it.estado]}</span>
+          </div>`).join('') || '<p class="text-sm opacity-50">Sin items activos.</p>'}
+      </div>
+      <div class="flex justify-between font-bold mt-4"><span>Total corriente</span><span>${formatoCOP(totalMesa(mesa.numero))}</span></div>
+      <div class="grid ${mesa.estado === 'cuenta_solicitada' ? 'grid-cols-1' : 'grid-cols-2'} gap-2 mt-4">
+        ${items.some((it) => it.estado === 'listo') ? `<button id="btn-entregar" class="btn-primario text-white rounded-xl py-2.5 text-sm font-semibold">Marcar entregado</button>` : ''}
+        ${mesa.estado !== 'cuenta_solicitada' ? `<button id="btn-pedir-cuenta" class="border border-gray-300 rounded-xl py-2.5 text-sm font-semibold">Solicitar cuenta</button>` : `<p class="text-xs text-center opacity-50 py-2">El cierre de pago lo hace Caja.</p>`}
+      </div>`;
+    const btnEntregar = document.getElementById('btn-entregar');
+    if (btnEntregar) btnEntregar.addEventListener('click', () => {
+      const pedidosListos = new Set(items.filter((it) => it.estado === 'listo').map((it) => it.pedidoId));
+      pedidosListos.forEach((pid) => marcarPedidoEntregado(db, pid));
+      guardarDB(db);
+      renderMesas();
+      cerrarModalMesa();
+      mostrarToast(`Pedido de Mesa ${mesa.numero} marcado entregado`);
+    });
+    const btnCuenta = document.getElementById('btn-pedir-cuenta');
+    if (btnCuenta) btnCuenta.addEventListener('click', () => {
+      crearLlamado(db, mesa.numero, 'solicitar_cuenta');
+      guardarDB(db);
+      renderMesas();
+      renderLlamados();
+      cerrarModalMesa();
+      mostrarToast(`Cuenta solicitada para Mesa ${mesa.numero}`);
+    });
+  }
+  document.getElementById('modal-mesa').classList.remove('hidden');
+}
+
+function cerrarModalMesa() { mesaModalAbierta = null; document.getElementById('modal-mesa').classList.add('hidden'); }
+document.querySelectorAll('[data-cerrar-modal]').forEach((el) => el.addEventListener('click', cerrarModalMesa));
+
+function aplicarTemaHeader() {
+  const raiz = document.documentElement.style;
+  raiz.setProperty('--color-primario', db.tema.colorPrimario);
+  raiz.setProperty('--color-secundario', db.tema.colorSecundario);
+  document.getElementById('logo').textContent = (db.tema.logoIniciales || 'RL').toUpperCase();
+  document.getElementById('subtitulo').textContent = `${db.restaurante.nombre} — turno de Camila`;
+  document.getElementById('badge-rota-qr').innerHTML = `rota_qr: <b>${db.restaurante.rotaQr}</b>`;
+}
+
+let toastTimeout;
+function mostrarToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => toast.classList.add('hidden'), 2200);
+}
+
+// ---------- Reaccion a cambios de otras pestañas ----------
+suscribirseEvento('db-actualizada', () => {
+  const idsAntes = new Set(db.llamados.map((l) => l.id));
+  db = cargarDB();
+  const nuevos = new Set(db.llamados.filter((l) => !idsAntes.has(l.id)).map((l) => l.id));
+
+  aplicarTemaHeader();
+  renderLlamados(nuevos);
+  renderMesas();
+  if (mesaModalAbierta && !document.getElementById('modal-mesa').classList.contains('hidden')) {
+    abrirModalMesa(mesaModalAbierta); // refresca el detalle si sigue abierto
+  }
+  if (nuevos.size > 0) {
+    const l = db.llamados.find((x) => nuevos.has(x.id));
+    reproducirBeep();
+    mostrarToast(`${l.tipo === 'llamar_mesero' ? '🛎️ Llaman al mesero' : '🧾 Piden la cuenta'} — Mesa ${l.mesaNumero}`);
+  }
+});
+
+aplicarTemaHeader();
+renderLlamados();
+renderMesas();
+</script>
+</body>
+</html>

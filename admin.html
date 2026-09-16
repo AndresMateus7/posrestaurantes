@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panel de Administrador — Plantilla</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="canal-tiempo-real.js"></script>
+<script src="datos-compartidos.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root { --color-primario:#DC2626; --color-secundario:#1F2937; --color-fondo:#F9FAFB; --color-texto:#111827; --fuente:'Poppins', sans-serif; }
+  body { background: #F3F4F6; color: #111827; font-family: 'Inter', sans-serif; }
+  .btn-primario { background: var(--color-primario); }
+  .tab-admin[data-activa="true"] { background: #111827; color: white; }
+  .badge-ok { background:#DCFCE7; color:#166534; }
+  .badge-bajo { background:#FEF3C7; color:#92400E; }
+  .badge-agotado { background:#FEE2E2; color:#991B1B; }
+  input[type=color] { -webkit-appearance:none; border:none; padding:0; width:36px; height:36px; border-radius:9999px; overflow:hidden; }
+  input[type=color]::-webkit-color-swatch { border:none; border-radius:9999px; }
+  .switch { width:40px; height:22px; border-radius:9999px; position:relative; cursor:pointer; transition:.2s; }
+  .switch-knob { width:18px; height:18px; border-radius:9999px; background:white; position:absolute; top:2px; left:2px; transition:.2s; }
+  .switch[data-on="true"] { background: var(--color-primario); }
+  .switch[data-on="false"] { background: #D1D5DB; }
+  .switch[data-on="true"] .switch-knob { transform: translateX(18px); }
+  #canvas-plano { position: relative; background-image: radial-gradient(#E5E7EB 1px, transparent 1px); background-size: 16px 16px; touch-action: none; }
+  .elemento-plano { transition: box-shadow .15s ease; }
+  .elemento-plano:hover { box-shadow: 0 0 0 2px rgba(0,0,0,.15); }
+  .elemento-plano[data-seleccionado="true"] { box-shadow: 0 0 0 2px #111827; }
+  @keyframes aparecer { from { opacity:0; transform: translateY(6px);} to { opacity:1; transform: translateY(0);} }
+  .toast-anim { animation: aparecer .2s ease-out; }
+</style>
+</head>
+<body class="min-h-screen pb-10">
+
+  <header class="bg-gray-900 text-white">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+      <span class="font-bold">⚙️ Panel de Administrador</span>
+      <span id="nombre-restaurante-header" class="text-xs opacity-50">Restaurante La Gorda</span>
+      <nav id="tabs-admin" class="flex gap-1 ml-auto flex-wrap"></nav>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-6">
+
+    <!-- ============ TEMA ============ -->
+    <section data-panel="tema" class="hidden grid md:grid-cols-2 gap-6">
+      <div class="bg-white rounded-2xl p-5 shadow-sm space-y-4">
+        <h2 class="font-semibold">Personalización y branding</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <label class="flex items-center gap-3 text-sm">
+            <input type="color" id="in-primario"> Color primario
+          </label>
+          <label class="flex items-center gap-3 text-sm">
+            <input type="color" id="in-secundario"> Color secundario
+          </label>
+          <label class="flex items-center gap-3 text-sm">
+            <input type="color" id="in-fondo"> Fondo
+          </label>
+          <label class="flex items-center gap-3 text-sm">
+            <input type="color" id="in-texto"> Texto
+          </label>
+        </div>
+        <label class="block text-sm">
+          <span class="block mb-1 opacity-70">Tipografía</span>
+          <select id="in-fuente" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+            <option value="'Poppins', sans-serif">Poppins</option>
+            <option value="'Inter', sans-serif">Inter</option>
+            <option value="'Playfair Display', serif">Playfair Display</option>
+          </select>
+        </label>
+        <label class="block text-sm">
+          <span class="block mb-1 opacity-70">Iniciales del logo</span>
+          <input id="in-logo" maxlength="2" class="w-24 border border-gray-300 rounded-lg px-3 py-2 uppercase">
+        </label>
+        <button id="btn-guardar-tema" class="btn-primario text-white rounded-xl px-4 py-2 font-semibold text-sm">Guardar cambios</button>
+      </div>
+
+      <div>
+        <h2 class="font-semibold mb-2 text-sm opacity-70">Vista previa — así se ve en menu-cliente.html</h2>
+        <div id="preview-tema" class="rounded-2xl shadow-sm overflow-hidden border border-black/5">
+          <div class="px-4 py-3 flex items-center gap-3" style="background: var(--color-fondo, #fff);">
+            <div id="preview-logo" class="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style="background: var(--color-secundario);">LG</div>
+            <div>
+              <p class="font-semibold" style="color: var(--color-texto); font-family: var(--fuente);">Restaurante La Gorda</p>
+              <p class="text-xs opacity-60" style="color: var(--color-texto);">Menú digital</p>
+            </div>
+          </div>
+          <div class="px-4 pb-3 flex gap-2" style="background: var(--color-fondo, #fff);">
+            <span class="text-white text-xs font-medium rounded-full px-3 py-1" style="background: var(--color-primario);">Entradas</span>
+            <span class="text-xs font-medium rounded-full px-3 py-1 border" style="color: var(--color-texto); border-color: currentColor;">Bebidas</span>
+          </div>
+          <div class="p-4 bg-white">
+            <p class="font-semibold" style="color: var(--color-texto);">Patacones con hogao</p>
+            <div class="flex items-center justify-between mt-2">
+              <span class="font-bold" style="color: var(--color-primario);">$18.000</span>
+              <span class="text-white text-xs font-medium rounded-full px-3 py-1.5" style="background: var(--color-primario);">Agregar</span>
+            </div>
+          </div>
+        </div>
+        <p class="text-xs opacity-50 mt-2">Al guardar, este tema se aplica en vivo a <code>menu-cliente.html</code> aunque ya esté abierto en otra pestaña.</p>
+      </div>
+    </section>
+
+    <!-- ============ PRODUCTOS Y RECETA ============ -->
+    <section data-panel="productos" class="hidden space-y-3">
+      <p class="text-sm opacity-60">La disponibilidad "efectiva" cruza el toggle manual con el stock de cada ingrediente de la receta (vista <code>productos_disponibilidad</code>). Ajusta stock en la pestaña Inventario y el efecto se ve aquí y en <code>menu-cliente.html</code> al instante.</p>
+      <div id="lista-productos-admin" class="space-y-3"></div>
+    </section>
+
+    <!-- ============ INVENTARIO ============ -->
+    <section data-panel="inventario" class="hidden">
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left text-xs uppercase opacity-60">
+            <tr><th class="px-4 py-3">Ingrediente</th><th class="px-4 py-3">Stock</th><th class="px-4 py-3">Mínimo</th><th class="px-4 py-3">Estado</th><th class="px-4 py-3">Ajustar</th></tr>
+          </thead>
+          <tbody id="tabla-inventario"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ MESAS Y QR ============ -->
+    <section data-panel="mesas" class="hidden space-y-4">
+      <div class="bg-white rounded-2xl p-5 shadow-sm flex items-center justify-between">
+        <div>
+          <p class="font-medium">Rotar QR automáticamente</p>
+          <p class="text-xs opacity-60 mt-0.5">Si está apagado, el mesero debe abrir cada mesa manualmente (ver <code>mesero.html</code>).</p>
+        </div>
+        <div id="switch-rota-qr" class="switch" data-on="false"><div class="switch-knob"></div></div>
+      </div>
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-left text-xs uppercase opacity-60">
+            <tr><th class="px-4 py-3">Mesa</th><th class="px-4 py-3">Estado</th><th class="px-4 py-3">Enlace del menú (QR)</th></tr>
+          </thead>
+          <tbody id="tabla-mesas"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ PLANO DEL LOCAL ============ -->
+    <section data-panel="plano" class="hidden">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="text-xs font-semibold uppercase opacity-50 mr-1">Agregar:</span>
+        <button data-agregar-tipo="mesa:cuadrada" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">▢ Mesa cuadrada</button>
+        <button data-agregar-tipo="mesa:redonda" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">○ Mesa redonda</button>
+        <button data-agregar-tipo="mesa:rectangular" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">▭ Mesa rectangular</button>
+        <button data-agregar-tipo="barra:rectangular" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">🍹 Barra</button>
+        <button data-agregar-tipo="pared:rectangular" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">▬ Pared</button>
+        <button data-agregar-tipo="caja:rectangular" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">💳 Caja</button>
+        <button data-agregar-tipo="cocina:rectangular" class="text-xs border border-gray-300 bg-white rounded-full px-3 py-1.5">🍳 Cocina</button>
+      </div>
+      <div class="grid lg:grid-cols-[1fr_260px] gap-4">
+        <div id="canvas-plano" class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden" style="height: 520px;"></div>
+        <div class="bg-white rounded-2xl shadow-sm p-4">
+          <div class="flex gap-3 text-[11px] flex-wrap mb-4">
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-gray-300"></span>Libre</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-400"></span>Ocupada</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-green-400"></span>Servido</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>Cuenta</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span>Reservada</span>
+          </div>
+          <div id="panel-elemento"><p class="text-sm opacity-40">Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para editarlo.</p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-full text-white text-sm shadow-lg toast-anim" style="background:#111827;"></div>
+
+<script>
+let db = cargarDB();
+
+const TABS = [
+  { id: 'tema', nombre: 'Tema' },
+  { id: 'productos', nombre: 'Productos y receta' },
+  { id: 'inventario', nombre: 'Inventario' },
+  { id: 'mesas', nombre: 'Mesas y QR' },
+  { id: 'plano', nombre: 'Plano del local' },
+];
+let tabActiva = 'tema';
+let productoExpandido = null;
+let elementoSeleccionado = null;
+
+const formatoCOP = (v) => '$' + v.toLocaleString('es-CO');
+
+// ---------- Tabs ----------
+function renderTabsAdmin() {
+  document.getElementById('tabs-admin').innerHTML = TABS.map((t) =>
+    `<button data-tab="${t.id}" data-activa="${t.id === tabActiva}" class="tab-admin px-3 py-1.5 rounded-lg text-sm font-medium">${t.nombre}</button>`).join('');
+  document.querySelectorAll('[data-panel]').forEach((sec) => sec.classList.toggle('hidden', sec.dataset.panel !== tabActiva));
+  document.querySelectorAll('#tabs-admin [data-tab]').forEach((btn) => btn.addEventListener('click', () => { tabActiva = btn.dataset.tab; renderTabsAdmin(); }));
+}
+
+// ---------- Tema ----------
+function cargarFormularioTema() {
+  document.getElementById('in-primario').value = db.tema.colorPrimario;
+  document.getElementById('in-secundario').value = db.tema.colorSecundario;
+  document.getElementById('in-fondo').value = db.tema.colorFondo;
+  document.getElementById('in-texto').value = db.tema.colorTexto;
+  document.getElementById('in-fuente').value = db.tema.fuente;
+  document.getElementById('in-logo').value = db.tema.logoIniciales;
+  document.getElementById('nombre-restaurante-header').textContent = db.restaurante.nombre;
+  actualizarPreviewTema();
+}
+function actualizarPreviewTema() {
+  const raiz = document.getElementById('preview-tema').style;
+  raiz.setProperty('--color-primario', document.getElementById('in-primario').value);
+  raiz.setProperty('--color-secundario', document.getElementById('in-secundario').value);
+  raiz.setProperty('--color-fondo', document.getElementById('in-fondo').value);
+  raiz.setProperty('--color-texto', document.getElementById('in-texto').value);
+  raiz.setProperty('--fuente', document.getElementById('in-fuente').value);
+  document.getElementById('preview-logo').textContent = document.getElementById('in-logo').value.toUpperCase() || 'LG';
+}
+['in-primario', 'in-secundario', 'in-fondo', 'in-texto', 'in-fuente', 'in-logo'].forEach((id) =>
+  document.getElementById(id).addEventListener('input', actualizarPreviewTema));
+document.getElementById('btn-guardar-tema').addEventListener('click', () => {
+  guardarTema(db, {
+    colorPrimario: document.getElementById('in-primario').value,
+    colorSecundario: document.getElementById('in-secundario').value,
+    colorFondo: document.getElementById('in-fondo').value,
+    colorTexto: document.getElementById('in-texto').value,
+    fuente: document.getElementById('in-fuente').value,
+    logoIniciales: document.getElementById('in-logo').value,
+  });
+  guardarDB(db);
+  mostrarToast('Tema guardado (PUT /api/tema) ✅ — ya se ve en menu-cliente.html');
+});
+
+// ---------- Productos y receta ----------
+function renderProductosAdmin() {
+  const cont = document.getElementById('lista-productos-admin');
+  cont.innerHTML = db.productos.map((p) => {
+    const efectivo = disponibleEfectivo(p, db);
+    const expandido = productoExpandido === p.id;
+    return `
+    <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <button data-toggle-producto="${p.id}" class="w-full flex items-center gap-3 px-4 py-3 text-left">
+        <span class="font-medium flex-1">${p.nombre}</span>
+        <span class="text-xs opacity-50">${db.categorias.find((c) => c.id === p.categoriaId).nombre}</span>
+        <span class="font-semibold text-sm w-20 text-right">${formatoCOP(p.precio)}</span>
+        <span class="text-xs px-2 py-1 rounded-full ${efectivo ? 'badge-ok' : 'badge-agotado'}">${efectivo ? 'Disponible' : 'Agotado'}</span>
+        <span data-switch-manual="${p.id}" class="switch" data-on="${p.disponibleManual}" title="Disponibilidad manual"><div class="switch-knob"></div></span>
+        <span class="opacity-40">${expandido ? '▲' : '▼'}</span>
+      </button>
+      ${expandido ? `
+      <div class="border-t border-gray-100 px-4 py-4 space-y-4">
+        <div>
+          <p class="text-xs font-semibold uppercase opacity-50 mb-2">Receta (ingredientes y peso usado)</p>
+          <div class="space-y-1.5">
+            ${p.ingredientes.map((pi, idx) => {
+              const ing = db.ingredientes.find((i) => i.id === pi.ingredienteId);
+              const ok = ing.stock >= pi.cantidadUsada;
+              return `<div class="flex items-center gap-2 text-sm">
+                <span class="flex-1 ${ok ? '' : 'text-red-600 font-medium'}">${ing.nombre} ${ok ? '' : '⚠ sin stock suficiente'}</span>
+                <input type="number" data-cantidad-receta="${p.id}:${idx}" value="${pi.cantidadUsada}" class="w-20 border border-gray-300 rounded-lg px-2 py-1 text-right">
+                <span class="opacity-50 w-10">${ing.unidad}</span>
+                <button data-quitar-receta="${p.id}:${idx}" class="text-red-500 px-1">&times;</button>
+              </div>`;
+            }).join('') || '<p class="text-sm opacity-40">Sin receta configurada — se considera siempre disponible por stock.</p>'}
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <select data-nuevo-ing="${p.id}" class="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+              <option value="">+ Agregar ingrediente...</option>
+              ${db.ingredientes.filter((i) => !p.ingredientes.some((pi) => pi.ingredienteId === i.id)).map((i) => `<option value="${i.id}">${i.nombre}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div>
+          <p class="text-xs font-semibold uppercase opacity-50 mb-2">Adicionales ofrecidos</p>
+          <div class="flex flex-wrap gap-3">
+            ${db.adicionales.map((a) => `
+              <label class="flex items-center gap-1.5 text-sm">
+                <input type="checkbox" data-adicional-producto="${p.id}:${a.id}" ${p.adicionales.includes(a.id) ? 'checked' : ''}>
+                ${a.nombre} <span class="opacity-50">+${formatoCOP(a.precio)}</span>
+              </label>`).join('')}
+          </div>
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  cont.querySelectorAll('[data-toggle-producto]').forEach((btn) => btn.addEventListener('click', (e) => {
+    if (e.target.closest('[data-switch-manual]')) return;
+    const id = btn.dataset.toggleProducto;
+    productoExpandido = productoExpandido === id ? null : id;
+    renderProductosAdmin();
+  }));
+  cont.querySelectorAll('[data-switch-manual]').forEach((sw) => sw.addEventListener('click', () => {
+    const p = db.productos.find((x) => x.id === sw.dataset.switchManual);
+    p.disponibleManual = !p.disponibleManual;
+    guardarDB(db);
+    renderProductosAdmin();
+  }));
+  cont.querySelectorAll('[data-cantidad-receta]').forEach((inp) => inp.addEventListener('change', () => {
+    const [pid, idx] = inp.dataset.cantidadReceta.split(':');
+    db.productos.find((p) => p.id === pid).ingredientes[idx].cantidadUsada = Number(inp.value);
+    guardarDB(db);
+    renderProductosAdmin();
+  }));
+  cont.querySelectorAll('[data-quitar-receta]').forEach((btn) => btn.addEventListener('click', () => {
+    const [pid, idx] = btn.dataset.quitarReceta.split(':');
+    db.productos.find((p) => p.id === pid).ingredientes.splice(idx, 1);
+    guardarDB(db);
+    renderProductosAdmin();
+  }));
+  cont.querySelectorAll('[data-nuevo-ing]').forEach((sel) => sel.addEventListener('change', () => {
+    if (!sel.value) return;
+    db.productos.find((p) => p.id === sel.dataset.nuevoIng).ingredientes.push({ ingredienteId: sel.value, cantidadUsada: 50 });
+    guardarDB(db);
+    renderProductosAdmin();
+  }));
+  cont.querySelectorAll('[data-adicional-producto]').forEach((cb) => cb.addEventListener('change', () => {
+    const [pid, aid] = cb.dataset.adicionalProducto.split(':');
+    const p = db.productos.find((x) => x.id === pid);
+    if (cb.checked) p.adicionales.push(aid); else p.adicionales = p.adicionales.filter((x) => x !== aid);
+    guardarDB(db);
+  }));
+}
+
+// ---------- Inventario ----------
+function estadoStock(ing) {
+  if (ing.stock <= 0) return { label: 'Agotado', clase: 'badge-agotado' };
+  if (ing.stock < ing.stockMin) return { label: 'Bajo', clase: 'badge-bajo' };
+  return { label: 'OK', clase: 'badge-ok' };
+}
+
+function renderInventario() {
+  const paso = (ing) => (ing.unidad === 'unidad' ? 1 : 50);
+  document.getElementById('tabla-inventario').innerHTML = db.ingredientes.map((ing) => {
+    const e = estadoStock(ing);
+    return `
+    <tr class="border-t border-gray-100">
+      <td class="px-4 py-3">${ing.nombre}</td>
+      <td class="px-4 py-3">${ing.stock} ${ing.unidad}</td>
+      <td class="px-4 py-3 opacity-60">${ing.stockMin} ${ing.unidad}</td>
+      <td class="px-4 py-3"><span class="text-xs px-2 py-1 rounded-full ${e.clase}">${e.label}</span></td>
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-1.5">
+          <button data-ajustar="${ing.id}:-${paso(ing)}" class="w-7 h-7 rounded-full border border-gray-300">−</button>
+          <button data-ajustar="${ing.id}:${paso(ing)}" class="w-7 h-7 rounded-full border border-gray-300">+</button>
+          <button data-reabastecer="${ing.id}" class="text-xs border border-gray-300 rounded-full px-2 py-1 ml-1">Reabastecer</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.querySelectorAll('[data-ajustar]').forEach((btn) => btn.addEventListener('click', () => {
+    const [id, delta] = btn.dataset.ajustar.split(':');
+    ajustarStock(db, id, Number(delta));
+    guardarDB(db);
+    renderInventario();
+    renderProductosAdmin();
+  }));
+  document.querySelectorAll('[data-reabastecer]').forEach((btn) => btn.addEventListener('click', () => {
+    reabastecerIngrediente(db, btn.dataset.reabastecer);
+    guardarDB(db);
+    const ing = db.ingredientes.find((i) => i.id === btn.dataset.reabastecer);
+    renderInventario();
+    renderProductosAdmin();
+    mostrarToast(`${ing.nombre} reabastecido (POST /api/ingredientes/:id/movimientos) 📦`);
+  }));
+}
+
+// ---------- Mesas y QR ----------
+function renderMesasAdmin() {
+  const ESTILO = { libre: 'bg-gray-100 text-gray-600', ocupada: 'bg-blue-100 text-blue-700', pedido_servido: 'bg-green-100 text-green-700', cuenta_solicitada: 'bg-amber-100 text-amber-800', reservada: 'bg-purple-100 text-purple-700' };
+  document.getElementById('tabla-mesas').innerHTML = db.mesas.map((m) => `
+    <tr class="border-t border-gray-100">
+      <td class="px-4 py-3 font-medium">Mesa ${m.numero}</td>
+      <td class="px-4 py-3"><span class="text-xs px-2 py-1 rounded-full ${ESTILO[m.estado]}">${m.estado.replace('_', ' ')}</span></td>
+      <td class="px-4 py-3"><a href="menu-cliente.html?mesa=${m.numero}" target="_blank" class="text-xs text-blue-600 underline">menu-cliente.html?mesa=${m.numero}</a></td>
+    </tr>`).join('');
+  document.getElementById('switch-rota-qr').dataset.on = db.restaurante.rotaQr;
+}
+
+document.getElementById('switch-rota-qr').addEventListener('click', function () {
+  setRotaQr(db, !db.restaurante.rotaQr);
+  guardarDB(db);
+  renderMesasAdmin();
+  mostrarToast(`rota_qr = ${db.restaurante.rotaQr} (PATCH /api/restaurante)`);
+});
+
+// ---------- Plano del local ----------
+const ESTILO_MESA_PLANO = {
+  libre: 'bg-gray-100 border-gray-400 text-gray-700',
+  ocupada: 'bg-blue-100 border-blue-500 text-blue-800',
+  pedido_servido: 'bg-green-100 border-green-500 text-green-800',
+  cuenta_solicitada: 'bg-amber-100 border-amber-500 text-amber-800',
+  reservada: 'bg-purple-100 border-purple-500 text-purple-800',
+};
+const ICONO_ELEMENTO = { barra: '🍹 Barra', pared: 'Pared', caja: '💳 Caja', cocina: '🍳 Cocina', decoracion: 'Decoración' };
+
+function tamanoDefault(tipo, forma) {
+  if (tipo === 'mesa') return forma === 'rectangular' ? { ancho: 110, alto: 70 } : { ancho: 70, alto: 70 };
+  if (tipo === 'barra') return { ancho: 140, alto: 50 };
+  if (tipo === 'pared') return { ancho: 120, alto: 14 };
+  if (tipo === 'caja') return { ancho: 90, alto: 60 };
+  if (tipo === 'cocina') return { ancho: 130, alto: 100 };
+  return { ancho: 60, alto: 60 };
+}
+
+document.querySelectorAll('[data-agregar-tipo]').forEach((btn) => btn.addEventListener('click', () => {
+  const [tipo, forma] = btn.dataset.agregarTipo.split(':');
+  const id = 'el-' + Date.now();
+  const idx = db.plano.layout.length;
+  const tam = tamanoDefault(tipo, forma);
+  db.plano.layout.push({ id, tipo, forma, x: 30 + (idx % 6) * 95, y: 20 + Math.floor(idx / 6) * 95, ancho: tam.ancho, alto: tam.alto, rotacion: 0 });
+  if (tipo === 'mesa') {
+    const siguiente = String(db.mesas.reduce((max, m) => Math.max(max, Number(m.numero) || 0), 0) + 1);
+    db.mesas.push({ id: 'm-' + id, elementoId: id, numero: siguiente, capacidad: 4, estado: 'libre' });
+  }
+  guardarDB(db);
+  renderPlano();
+  mostrarToast(tipo === 'mesa' ? 'Mesa agregada — arrástrala a su lugar' : 'Elemento agregado');
+}));
+
+function renderPlano() {
+  const canvas = document.getElementById('canvas-plano');
+  canvas.innerHTML = db.plano.layout.map((f) => {
+    if (f.tipo === 'mesa') {
+      const mesa = db.mesas.find((m) => m.elementoId === f.id);
+      const clase = ESTILO_MESA_PLANO[mesa ? mesa.estado : 'libre'];
+      const radio = f.forma === 'redonda' ? '9999px' : '10px';
+      return `<div data-elemento="${f.id}" data-seleccionado="${elementoSeleccionado === f.id}" class="elemento-plano absolute flex flex-col items-center justify-center border-2 cursor-move select-none ${clase}"
+        style="left:${f.x}px; top:${f.y}px; width:${f.ancho}px; height:${f.alto}px; border-radius:${radio};">
+        <span class="font-bold text-lg leading-none">${mesa ? mesa.numero : '?'}</span>
+        <span class="text-[10px] opacity-70">${mesa ? mesa.capacidad + 'p' : ''}</span>
+      </div>`;
+    }
+    return `<div data-elemento="${f.id}" data-seleccionado="${elementoSeleccionado === f.id}" class="elemento-plano absolute flex items-center justify-center text-center text-xs font-medium border-2 border-dashed border-gray-400 bg-gray-50 text-gray-500 cursor-move select-none rounded-lg px-1"
+      style="left:${f.x}px; top:${f.y}px; width:${f.ancho}px; height:${f.alto}px;">${ICONO_ELEMENTO[f.tipo] || f.tipo}</div>`;
+  }).join('');
+  activarArrastre();
+}
+
+function activarArrastre() {
+  document.querySelectorAll('.elemento-plano').forEach((el) => {
+    let arrastrando = false, movido = false, offsetX = 0, offsetY = 0;
+    el.addEventListener('pointerdown', (e) => {
+      arrastrando = true; movido = false;
+      el.setPointerCapture(e.pointerId);
+      const rectCanvas = document.getElementById('canvas-plano').getBoundingClientRect();
+      const f = db.plano.layout.find((x) => x.id === el.dataset.elemento);
+      offsetX = e.clientX - rectCanvas.left - f.x;
+      offsetY = e.clientY - rectCanvas.top - f.y;
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!arrastrando) return;
+      movido = true;
+      const rectCanvas = document.getElementById('canvas-plano').getBoundingClientRect();
+      const f = db.plano.layout.find((x) => x.id === el.dataset.elemento);
+      f.x = Math.max(0, Math.min(rectCanvas.width - f.ancho, e.clientX - rectCanvas.left - offsetX));
+      f.y = Math.max(0, Math.min(rectCanvas.height - f.alto, e.clientY - rectCanvas.top - offsetY));
+      el.style.left = f.x + 'px';
+      el.style.top = f.y + 'px';
+    });
+    el.addEventListener('pointerup', (e) => {
+      arrastrando = false;
+      el.releasePointerCapture(e.pointerId);
+      if (movido) { guardarDB(db); }
+      else { seleccionarElemento(el.dataset.elemento); }
+    });
+  });
+}
+
+function seleccionarElemento(id) {
+  elementoSeleccionado = id;
+  renderPlano();
+  const f = db.plano.layout.find((x) => x.id === id);
+  const panel = document.getElementById('panel-elemento');
+  if (f.tipo === 'mesa') {
+    const mesa = db.mesas.find((m) => m.elementoId === id);
+    panel.innerHTML = `
+      <p class="text-xs font-semibold uppercase opacity-50 mb-2">Mesa seleccionada</p>
+      <label class="block text-sm mb-2">Número
+        <input id="prop-numero" value="${mesa.numero}" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1">
+      </label>
+      <label class="block text-sm mb-2">Capacidad
+        <input id="prop-capacidad" type="number" value="${mesa.capacidad}" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1">
+      </label>
+      <label class="block text-sm mb-3">Forma
+        <select id="prop-forma" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1">
+          <option value="cuadrada" ${f.forma === 'cuadrada' ? 'selected' : ''}>Cuadrada</option>
+          <option value="redonda" ${f.forma === 'redonda' ? 'selected' : ''}>Redonda</option>
+          <option value="rectangular" ${f.forma === 'rectangular' ? 'selected' : ''}>Rectangular</option>
+        </select>
+      </label>
+      <p class="text-xs opacity-50 mb-3">Estado actual: <b>${mesa.estado.replace('_', ' ')}</b> (lo cambia el mesero/cliente, no se edita aquí)</p>
+      <button id="btn-eliminar-elemento" class="w-full border border-red-300 text-red-600 rounded-xl py-2 text-sm font-semibold">Eliminar mesa</button>`;
+    document.getElementById('prop-numero').addEventListener('change', (e) => { mesa.numero = e.target.value.trim() || mesa.numero; guardarDB(db); renderPlano(); renderMesasAdmin(); });
+    document.getElementById('prop-capacidad').addEventListener('change', (e) => { mesa.capacidad = Math.max(1, Number(e.target.value) || 1); guardarDB(db); renderPlano(); });
+    document.getElementById('prop-forma').addEventListener('change', (e) => {
+      f.forma = e.target.value;
+      const tam = tamanoDefault('mesa', f.forma);
+      f.ancho = tam.ancho; f.alto = tam.alto;
+      guardarDB(db); renderPlano();
+    });
+  } else {
+    panel.innerHTML = `
+      <p class="text-xs font-semibold uppercase opacity-50 mb-3">${ICONO_ELEMENTO[f.tipo] || f.tipo}</p>
+      <button id="btn-eliminar-elemento" class="w-full border border-red-300 text-red-600 rounded-xl py-2 text-sm font-semibold">Eliminar</button>`;
+  }
+  document.getElementById('btn-eliminar-elemento').addEventListener('click', () => {
+    db.plano.layout = db.plano.layout.filter((x) => x.id !== id);
+    db.mesas = db.mesas.filter((m) => m.elementoId !== id);
+    guardarDB(db);
+    elementoSeleccionado = null;
+    document.getElementById('panel-elemento').innerHTML = '<p class="text-sm opacity-40">Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para editarlo.</p>';
+    renderPlano();
+    renderMesasAdmin();
+    mostrarToast('Elemento eliminado');
+  });
+}
+
+// ---------- Toast ----------
+let toastTimeout;
+function mostrarToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => toast.classList.add('hidden'), 2600);
+}
+
+// ---------- Reaccion a cambios de otras pestañas ----------
+suscribirseEvento('db-actualizada', () => {
+  db = cargarDB();
+  cargarFormularioTema();
+  renderProductosAdmin();
+  renderInventario();
+  renderMesasAdmin();
+  renderPlano();
+});
+
+renderTabsAdmin();
+cargarFormularioTema();
+renderProductosAdmin();
+renderInventario();
+renderMesasAdmin();
+renderPlano();
+</script>
+</body>
+</html>

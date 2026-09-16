@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Menú Digital — Plantilla Cliente</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /*
+    Variables de tema (Requerimiento A). aplicarTema() las sobreescribe con
+    lo que haya en datos-compartidos.js -> db.tema (equivalente a
+    GET /api/public/menu/:qrToken/tema, arquitectura-backend.md sec. 3).
+    Todo el resto del archivo consume SOLO estas variables.
+  */
+  :root {
+    --color-primario: #DC2626;
+    --color-secundario: #1F2937;
+    --color-fondo: #F9FAFB;
+    --color-texto: #111827;
+    --color-superficie: #FFFFFF;
+    --fuente: 'Poppins', sans-serif;
+  }
+  body { background: var(--color-fondo); color: var(--color-texto); font-family: var(--fuente); }
+  .transicion-tema, .transicion-tema * { transition: background-color .35s ease, border-color .35s ease, color .35s ease; }
+  ::-webkit-scrollbar { height: 6px; width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--color-primario); border-radius: 4px; opacity: .5; }
+  .categoria-pill[data-activa="true"] { background: var(--color-primario); color: #fff; border-color: var(--color-primario); }
+  .btn-primario { background: var(--color-primario); }
+  .btn-primario:active { filter: brightness(0.92); }
+  .texto-primario { color: var(--color-primario); }
+  .aro-primario { box-shadow: 0 0 0 2px var(--color-primario); }
+  @keyframes entrar-abajo { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .animar-entrada { animation: entrar-abajo .25s ease-out; }
+  @keyframes aparecer { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .toast-anim { animation: aparecer .2s ease-out; }
+</style>
+</head>
+<body class="transicion-tema min-h-screen pb-28">
+
+  <div id="banner-mesa-cerrada" class="bg-amber-500/90 text-white text-xs px-4 py-2 text-center font-medium hidden">
+    🔒 Esta mesa aún no ha sido abierta por un mesero — puedes ver el menú, pero el pedido se habilita cuando la abran.
+  </div>
+
+  <!-- ============ Encabezado ============ -->
+  <header class="sticky top-0 z-30 shadow-sm" style="background: var(--color-superficie);">
+    <div class="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+      <div id="logo" class="w-11 h-11 rounded-full grid place-items-center text-white font-bold text-lg shrink-0" style="background: var(--color-secundario);">LG</div>
+      <div class="min-w-0">
+        <h1 id="nombre-restaurante" class="font-semibold leading-tight truncate" style="font-family:'Playfair Display', serif;">Restaurante La Gorda</h1>
+        <p class="text-xs opacity-60">Menú digital</p>
+      </div>
+      <div class="ml-auto shrink-0 flex flex-col items-end gap-1.5">
+        <div class="text-right">
+          <span class="text-[10px] uppercase tracking-wide opacity-60 block">Mesa</span>
+          <span id="numero-mesa" class="font-bold texto-primario text-lg leading-none">7</span>
+        </div>
+        <div class="flex gap-1.5">
+          <button id="btn-llamar-mesero" title="Llamar al mesero"
+            class="w-8 h-8 rounded-full grid place-items-center text-base bg-black/5 active:scale-90 transition">🛎️</button>
+          <button id="btn-solicitar-cuenta" title="Solicitar la cuenta"
+            class="w-8 h-8 rounded-full grid place-items-center text-base bg-black/5 active:scale-90 transition">🧾</button>
+        </div>
+      </div>
+    </div>
+    <!-- Categorías -->
+    <nav id="nav-categorias" class="max-w-2xl mx-auto px-4 pb-3 flex gap-2 overflow-x-auto"></nav>
+  </header>
+
+  <!-- ============ Productos ============ -->
+  <main class="max-w-2xl mx-auto px-4 py-4">
+    <div id="lista-productos" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+  </main>
+
+  <!-- ============ Barra flotante de carrito ============ -->
+  <button id="barra-carrito"
+    class="fixed bottom-4 left-4 right-4 max-w-2xl mx-auto btn-primario text-white rounded-2xl shadow-xl px-5 py-4 flex items-center justify-between z-30 hidden">
+    <span class="flex items-center gap-2 font-medium">
+      <span id="carrito-cantidad" class="bg-white/25 rounded-full w-6 h-6 grid place-items-center text-sm">0</span>
+      Ver pedido
+    </span>
+    <span id="carrito-total" class="font-bold">$0</span>
+  </button>
+
+  <!-- ============ Modal: detalle / agregar producto ============ -->
+  <div id="modal-producto" class="fixed inset-0 z-40 hidden">
+    <div class="absolute inset-0 bg-black/50" data-cerrar-modal></div>
+    <div class="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl animar-entrada" style="background: var(--color-superficie);">
+      <div class="p-5">
+        <div id="modal-emoji" class="w-full h-32 rounded-2xl grid place-items-center text-5xl mb-4" style="background: color-mix(in srgb, var(--color-primario) 12%, transparent);">🍽️</div>
+        <h3 id="modal-nombre" class="text-lg font-semibold"></h3>
+        <p id="modal-descripcion" class="text-sm opacity-70 mt-1"></p>
+        <div id="modal-alergenos" class="flex flex-wrap gap-1 mt-2"></div>
+
+        <div class="flex items-center justify-between mt-4">
+          <span id="modal-precio" class="text-xl font-bold texto-primario"></span>
+          <div class="flex items-center gap-3">
+            <button data-restar class="w-8 h-8 rounded-full border border-gray-300 text-lg leading-none">−</button>
+            <span id="modal-cantidad" class="w-6 text-center font-medium">1</span>
+            <button data-sumar class="w-8 h-8 rounded-full border border-gray-300 text-lg leading-none">+</button>
+          </div>
+        </div>
+
+        <div id="modal-ingredientes-wrap" class="mt-4">
+          <label class="block text-xs font-medium opacity-70 mb-1">Quitar algún ingrediente</label>
+          <div id="modal-ingredientes" class="space-y-1.5"></div>
+        </div>
+
+        <div id="modal-adicionales-wrap" class="mt-4">
+          <label class="block text-xs font-medium opacity-70 mb-1">Adicionar</label>
+          <div id="modal-adicionales" class="space-y-1.5"></div>
+        </div>
+
+        <button id="modal-agregar" class="w-full btn-primario text-white rounded-xl py-3 font-semibold mt-4 flex items-center justify-center gap-2">
+          Agregar al pedido <span id="modal-precio-total" class="font-bold"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Drawer: carrito / enviar pedido ============ -->
+  <div id="modal-carrito" class="fixed inset-0 z-40 hidden">
+    <div class="absolute inset-0 bg-black/50" data-cerrar-carrito></div>
+    <div class="absolute bottom-0 left-0 right-0 sm:top-0 sm:right-0 sm:left-auto sm:h-full sm:w-96 animar-entrada flex flex-col max-h-[85vh] sm:max-h-full rounded-t-3xl sm:rounded-none" style="background: var(--color-superficie);">
+      <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="font-semibold text-lg">Tu pedido — Mesa <span id="carrito-mesa-num"></span></h3>
+        <button data-cerrar-carrito class="text-2xl leading-none opacity-50">&times;</button>
+      </div>
+      <div id="carrito-items" class="flex-1 overflow-y-auto p-5 space-y-3"></div>
+      <div class="p-5 border-t border-gray-100">
+        <div class="flex justify-between text-sm mb-1"><span>Subtotal</span><span id="carrito-subtotal">$0</span></div>
+        <div class="flex justify-between font-bold text-lg mb-4"><span>Total</span><span id="carrito-total-2">$0</span></div>
+        <button id="btn-enviar-pedido" class="w-full btn-primario text-white rounded-xl py-3 font-semibold disabled:opacity-40">
+          Enviar pedido a cocina
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Toast ============ -->
+  <div id="toast" class="fixed top-16 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-full text-white text-sm shadow-lg toast-anim" style="background: var(--color-secundario);"></div>
+
+<script src="canal-tiempo-real.js"></script>
+<script src="datos-compartidos.js"></script>
+<script>
+let db = cargarDB();
+
+// El numero de mesa real vendria de resolver el qr_token (ver
+// arquitectura-backend.md sec. 5); aqui se simula con ?mesa=N en la URL.
+const MESA_NUMERO = new URLSearchParams(location.search).get('mesa') || '1';
+
+const ICONOS_ALERGENOS = { Gluten: '🌾', 'Lácteos': '🥛', 'Frutos secos': '🥜', Mariscos: '🦐', Huevo: '🥚' };
+
+const estado = {
+  categoriaActiva: db.categorias[0].id,
+  carrito: [],       // { productoId, cantidad, ingredientesRemovidos: [id], adicionales: [id] }
+  productoModal: null,
+};
+
+const formatoCOP = (valor) => '$' + valor.toLocaleString('es-CO');
+const mesaActual = () => db.mesas.find((m) => m.numero === MESA_NUMERO);
+
+// ---------- Tema ----------
+function aplicarTema(tema) {
+  const raiz = document.documentElement.style;
+  raiz.setProperty('--color-primario', tema.colorPrimario);
+  raiz.setProperty('--color-secundario', tema.colorSecundario);
+  raiz.setProperty('--color-fondo', tema.colorFondo);
+  raiz.setProperty('--color-texto', tema.colorTexto);
+  if (tema.fuente) raiz.setProperty('--fuente', tema.fuente);
+  document.getElementById('nombre-restaurante').textContent = db.restaurante.nombre;
+  document.getElementById('logo').textContent = (tema.logoIniciales || 'LG').toUpperCase();
+}
+
+// ---------- Render ----------
+function renderCategorias() {
+  const nav = document.getElementById('nav-categorias');
+  nav.innerHTML = db.categorias.map((cat) => `
+    <button class="categoria-pill shrink-0 px-4 py-1.5 rounded-full border border-gray-300 text-sm font-medium transition"
+      data-cat="${cat.id}" data-activa="${cat.id === estado.categoriaActiva}">
+      ${cat.nombre}
+    </button>`).join('');
+  nav.querySelectorAll('[data-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      estado.categoriaActiva = btn.dataset.cat;
+      renderCategorias();
+      renderProductos();
+    });
+  });
+}
+
+function renderProductos() {
+  const cont = document.getElementById('lista-productos');
+  const productos = db.productos.filter((p) => p.categoriaId === estado.categoriaActiva);
+  cont.innerHTML = productos.map((p) => {
+    const disponible = disponibleEfectivo(p, db);
+    return `
+    <article class="rounded-2xl overflow-hidden shadow-sm border border-black/5 flex flex-col ${disponible ? '' : 'grayscale opacity-60'}" style="background: var(--color-superficie);">
+      <div class="h-28 grid place-items-center text-4xl relative" style="background: color-mix(in srgb, var(--color-primario) 10%, transparent);">
+        ${p.emoji}
+        ${disponible ? '' : '<span class="absolute top-2 right-2 bg-gray-800 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">AGOTADO</span>'}
+      </div>
+      <div class="p-4 flex flex-col flex-1">
+        <h3 class="font-semibold">${p.nombre}</h3>
+        <p class="text-xs opacity-60 mt-1 flex-1">${p.descripcion}</p>
+        <div class="flex flex-wrap gap-1 mt-2">
+          ${p.alergenos.map((a) => `<span class="text-[10px] bg-black/5 rounded-full px-2 py-0.5">${ICONOS_ALERGENOS[a] || '⚠️'} ${a}</span>`).join('')}
+        </div>
+        <div class="flex items-center justify-between mt-3">
+          <span class="font-bold texto-primario">${formatoCOP(p.precio)}</span>
+          ${disponible
+            ? `<button data-agregar="${p.id}" class="btn-primario text-white text-sm font-medium rounded-full px-4 py-1.5">Agregar</button>`
+            : `<button disabled class="bg-gray-200 text-gray-500 text-sm font-medium rounded-full px-4 py-1.5 cursor-not-allowed">Agotado</button>`}
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+  cont.querySelectorAll('[data-agregar]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalProducto(btn.dataset.agregar));
+  });
+}
+
+// ---------- Modal producto ----------
+function abrirModalProducto(productoId) {
+  const producto = db.productos.find((p) => p.id === productoId);
+  estado.productoModal = {
+    producto, cantidad: 1,
+    ingredientesExcluidos: new Set(),
+    adicionalesSeleccionados: new Set(),
+  };
+  document.getElementById('modal-emoji').textContent = producto.emoji;
+  document.getElementById('modal-nombre').textContent = producto.nombre;
+  document.getElementById('modal-descripcion').textContent = producto.descripcion;
+  document.getElementById('modal-alergenos').innerHTML = producto.alergenos
+    .map((a) => `<span class="text-[10px] bg-black/5 rounded-full px-2 py-0.5">${ICONOS_ALERGENOS[a] || '⚠️'} ${a}</span>`).join('');
+  document.getElementById('modal-cantidad').textContent = '1';
+
+  const ingredientesProducto = producto.ingredientes.map((pi) => db.ingredientes.find((i) => i.id === pi.ingredienteId));
+  const wrapIng = document.getElementById('modal-ingredientes-wrap');
+  wrapIng.classList.toggle('hidden', ingredientesProducto.length === 0);
+  document.getElementById('modal-ingredientes').innerHTML = ingredientesProducto.map((ing) => `
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" data-ing="${ing.id}" checked>
+      <span>${ing.nombre}</span>
+    </label>`).join('');
+  document.querySelectorAll('#modal-ingredientes [data-ing]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) estado.productoModal.ingredientesExcluidos.delete(cb.dataset.ing);
+      else estado.productoModal.ingredientesExcluidos.add(cb.dataset.ing);
+    });
+  });
+
+  const adicionalesProducto = producto.adicionales.map((id) => db.adicionales.find((a) => a.id === id));
+  const wrapAd = document.getElementById('modal-adicionales-wrap');
+  wrapAd.classList.toggle('hidden', adicionalesProducto.length === 0);
+  document.getElementById('modal-adicionales').innerHTML = adicionalesProducto.map((ad) => `
+    <label class="flex items-center justify-between text-sm">
+      <span class="flex items-center gap-2"><input type="checkbox" data-ad="${ad.id}"> ${ad.nombre}</span>
+      <span class="opacity-60">+${formatoCOP(ad.precio)}</span>
+    </label>`).join('');
+  document.querySelectorAll('#modal-adicionales [data-ad]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) estado.productoModal.adicionalesSeleccionados.add(cb.dataset.ad);
+      else estado.productoModal.adicionalesSeleccionados.delete(cb.dataset.ad);
+      actualizarPrecioModal();
+    });
+  });
+
+  actualizarPrecioModal();
+  document.getElementById('modal-producto').classList.remove('hidden');
+}
+
+function precioUnitarioModal() {
+  const { producto, adicionalesSeleccionados } = estado.productoModal;
+  const extras = producto.adicionales
+    .map((id) => db.adicionales.find((a) => a.id === id))
+    .filter((ad) => adicionalesSeleccionados.has(ad.id))
+    .reduce((acc, ad) => acc + ad.precio, 0);
+  return producto.precio + extras;
+}
+
+function actualizarPrecioModal() {
+  const { cantidad } = estado.productoModal;
+  const total = precioUnitarioModal() * cantidad;
+  document.getElementById('modal-precio').textContent = formatoCOP(precioUnitarioModal());
+  document.getElementById('modal-precio-total').textContent = formatoCOP(total);
+}
+
+document.querySelectorAll('[data-cerrar-modal]').forEach((el) =>
+  el.addEventListener('click', () => document.getElementById('modal-producto').classList.add('hidden')));
+
+document.querySelector('[data-restar]').addEventListener('click', () => {
+  estado.productoModal.cantidad = Math.max(1, estado.productoModal.cantidad - 1);
+  document.getElementById('modal-cantidad').textContent = estado.productoModal.cantidad;
+  actualizarPrecioModal();
+});
+document.querySelector('[data-sumar]').addEventListener('click', () => {
+  estado.productoModal.cantidad += 1;
+  document.getElementById('modal-cantidad').textContent = estado.productoModal.cantidad;
+  actualizarPrecioModal();
+});
+
+document.getElementById('modal-agregar').addEventListener('click', () => {
+  const { producto, cantidad, ingredientesExcluidos, adicionalesSeleccionados } = estado.productoModal;
+  estado.carrito.push({
+    productoId: producto.id,
+    cantidad,
+    ingredientesRemovidos: [...ingredientesExcluidos],
+    adicionales: [...adicionalesSeleccionados],
+  });
+  document.getElementById('modal-producto').classList.add('hidden');
+  renderBarraCarrito();
+  mostrarToast(`${producto.nombre} agregado (${cantidad})`);
+});
+
+// ---------- Carrito ----------
+function precioLineaCarrito(item) {
+  const producto = db.productos.find((p) => p.id === item.productoId);
+  const extras = item.adicionales
+    .map((id) => db.adicionales.find((a) => a.id === id))
+    .reduce((acc, ad) => acc + ad.precio, 0);
+  return (producto.precio + extras) * item.cantidad;
+}
+
+function totalCarrito() {
+  return estado.carrito.reduce((acc, item) => acc + precioLineaCarrito(item), 0);
+}
+
+function renderBarraCarrito() {
+  const cantidad = estado.carrito.reduce((acc, i) => acc + i.cantidad, 0);
+  const barra = document.getElementById('barra-carrito');
+  if (cantidad === 0) { barra.classList.add('hidden'); return; }
+  barra.classList.remove('hidden');
+  document.getElementById('carrito-cantidad').textContent = cantidad;
+  document.getElementById('carrito-total').textContent = formatoCOP(totalCarrito());
+}
+
+function puedeEnviarPedido() {
+  const mesa = mesaActual();
+  return db.restaurante.rotaQr || (mesa && mesa.estado !== 'libre');
+}
+
+function renderCarrito() {
+  const cont = document.getElementById('carrito-items');
+  if (estado.carrito.length === 0) {
+    cont.innerHTML = '<p class="text-sm opacity-50 text-center py-8">Tu pedido está vacío.</p>';
+  } else {
+    cont.innerHTML = estado.carrito.map((item, idx) => {
+      const producto = db.productos.find((p) => p.id === item.productoId);
+      const sinIngredientes = item.ingredientesRemovidos.map((id) => db.ingredientes.find((i) => i.id === id));
+      const extras = item.adicionales.map((id) => db.adicionales.find((a) => a.id === id));
+      return `
+        <div class="flex items-start gap-3 border-b border-gray-100 pb-3">
+          <span class="text-2xl">${producto.emoji}</span>
+          <div class="flex-1 min-w-0">
+            <p class="font-medium text-sm">${producto.nombre} <span class="opacity-50">× ${item.cantidad}</span></p>
+            ${sinIngredientes.length ? `<p class="text-xs opacity-50">Sin: ${sinIngredientes.map((i) => i.nombre).join(', ')}</p>` : ''}
+            ${extras.length ? `<p class="text-xs texto-primario">+ ${extras.map((a) => a.nombre).join(', +')}</p>` : ''}
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold">${formatoCOP(precioLineaCarrito(item))}</span>
+            <button data-quitar="${idx}" class="text-red-500 text-lg leading-none">&times;</button>
+          </div>
+        </div>`;
+    }).join('');
+    cont.querySelectorAll('[data-quitar]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        estado.carrito.splice(Number(btn.dataset.quitar), 1);
+        renderCarrito();
+        renderBarraCarrito();
+      });
+    });
+  }
+  const total = totalCarrito();
+  document.getElementById('carrito-subtotal').textContent = formatoCOP(total);
+  document.getElementById('carrito-total-2').textContent = formatoCOP(total);
+  const puedeEnviar = puedeEnviarPedido();
+  const btnEnviar = document.getElementById('btn-enviar-pedido');
+  btnEnviar.disabled = estado.carrito.length === 0 || !puedeEnviar;
+  btnEnviar.textContent = puedeEnviar ? 'Enviar pedido a cocina' : 'Esperando a que el mesero abra la mesa...';
+}
+
+document.getElementById('barra-carrito').addEventListener('click', () => {
+  renderCarrito();
+  document.getElementById('modal-carrito').classList.remove('hidden');
+});
+document.querySelectorAll('[data-cerrar-carrito]').forEach((el) =>
+  el.addEventListener('click', () => document.getElementById('modal-carrito').classList.add('hidden')));
+
+document.getElementById('btn-enviar-pedido').addEventListener('click', function () {
+  this.disabled = true;
+  const textoOriginal = this.textContent;
+  this.textContent = 'Enviando...';
+  setTimeout(() => {
+    try {
+      crearPedido(db, { mesaNumero: MESA_NUMERO, items: estado.carrito, origen: 'qr_cliente' });
+      guardarDB(db);
+      mostrarToast('Pedido enviado a cocina 👨‍🍳');
+      estado.carrito = [];
+      renderBarraCarrito();
+      document.getElementById('modal-carrito').classList.add('hidden');
+      renderTodo();
+    } catch (e) {
+      const msg = String(e.message || e);
+      mostrarToast(msg.startsWith('producto_agotado') ? 'Un producto se agotó justo ahora, revisa tu pedido 😕' : 'No se pudo enviar el pedido');
+      this.textContent = textoOriginal;
+    }
+  }, 500);
+});
+
+// ---------- Llamar mesero / solicitar cuenta ----------
+function accionRapida(boton, mensaje, tipo) {
+  boton.disabled = true;
+  const original = boton.style.opacity;
+  boton.style.opacity = '0.5';
+  crearLlamado(db, MESA_NUMERO, tipo);
+  guardarDB(db);
+  mostrarToast(mensaje);
+  renderTodo();
+  setTimeout(() => { boton.disabled = false; boton.style.opacity = original; }, 4000); // evita doble-tap
+}
+document.getElementById('btn-llamar-mesero').addEventListener('click', function () {
+  accionRapida(this, 'Mesero avisado, ya te atiende 🛎️', 'llamar_mesero');
+});
+document.getElementById('btn-solicitar-cuenta').addEventListener('click', function () {
+  accionRapida(this, 'Cuenta solicitada 🧾', 'solicitar_cuenta');
+});
+
+// ---------- Toast ----------
+let toastTimeout;
+function mostrarToast(mensaje) {
+  const toast = document.getElementById('toast');
+  toast.textContent = mensaje;
+  toast.classList.remove('hidden');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => toast.classList.add('hidden'), 2200);
+}
+
+// ---------- Estado de la mesa (abierta/cerrada) ----------
+function renderEstadoMesa() {
+  const mesa = mesaActual();
+  document.getElementById('numero-mesa').textContent = mesa ? mesa.numero : MESA_NUMERO;
+  document.getElementById('carrito-mesa-num').textContent = mesa ? mesa.numero : MESA_NUMERO;
+  document.getElementById('banner-mesa-cerrada').classList.toggle('hidden', puedeEnviarPedido());
+}
+
+// ---------- Render conjunto + reaccion a cambios de otras pestañas ----------
+function renderTodo() {
+  aplicarTema(db.tema);
+  renderEstadoMesa();
+  renderCategorias();
+  renderProductos();
+  renderBarraCarrito();
+  if (!document.getElementById('modal-carrito').classList.contains('hidden')) renderCarrito();
+}
+
+suscribirseEvento('db-actualizada', () => {
+  db = cargarDB();
+  renderTodo();
+});
+
+renderTodo();
+</script>
+</body>
+</html>

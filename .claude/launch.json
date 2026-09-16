@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "restaurant-saas-preview",
+      "runtimeExecutable": "C:\\Users\\Administrador\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "8964", "--directory", "C:\\Users\\Administrador\\restaurant-saas"],
+      "port": 8964
+    }
+  ]
+}

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KDS Cocina — Plantilla</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="canal-tiempo-real.js"></script>
+<script src="datos-compartidos.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@600&display=swap" rel="stylesheet" />
+<style>
+  /* Pantalla de cocina: fondo oscuro fijo (se lee mejor bajo luces de cocina
+     y en TVs/tablets), no usa el tema de marca del restaurante -- lo único
+     "de marca" que le importa a cocina es la comanda, no los colores del
+     cliente. El semáforo (borde de la tarjeta) es semántico fijo. */
+  body { background: #111827; color: #F3F4F6; font-family: 'Inter', sans-serif; }
+  .tiempo { font-family: 'Roboto Mono', monospace; }
+  .tab-estacion[data-activa="true"] { background: #F3F4F6; color: #111827; }
+  .tarjeta-item { transition: border-color .3s ease; }
+  @keyframes aparecer { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
+  .animar-entrada { animation: aparecer .2s ease-out; }
+  @keyframes salir { to { opacity: 0; transform: scale(.95); } }
+  .animar-salida { animation: salir .25s ease-in forwards; }
+  @keyframes toast-anim { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  .toast-anim { animation: toast-anim .2s ease-out; }
+</style>
+</head>
+<body class="min-h-screen pb-10">
+
+  <header class="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-white/10">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4 flex-wrap">
+      <h1 class="font-bold text-lg">🍳 KDS — Cocina</h1>
+      <nav id="tabs-estacion" class="flex gap-2 ml-auto"></nav>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-5">
+    <div id="grid-items" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    <p id="sin-items" class="text-center opacity-40 py-16 hidden">No hay pedidos pendientes en esta estación. 🎉</p>
+  </main>
+
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-full text-white text-sm shadow-lg toast-anim" style="background:#DC2626;"></div>
+
+<script>
+let db = cargarDB();
+
+const ESTACIONES = [
+  { id: 'todas', nombre: 'Todas' },
+  { id: 'bar', nombre: 'Bar' },
+  { id: 'parrilla', nombre: 'Parrilla' },
+  { id: 'cocina_general', nombre: 'Cocina general' },
+];
+let estacionActiva = 'todas';
+
+function itemsActivos() {
+  return db.itemsPedido.filter((it) => it.estado === 'pendiente' || it.estado === 'en_preparacion');
+}
+
+function renderTabs() {
+  const nav = document.getElementById('tabs-estacion');
+  const activos = itemsActivos();
+  nav.innerHTML = ESTACIONES.map((e) => {
+    const n = activos.filter((it) => e.id === 'todas' || it.estacion === e.id).length;
+    return `<button data-est="${e.id}" data-activa="${e.id === estacionActiva}" class="tab-estacion px-3 py-1.5 rounded-full text-sm font-medium border border-white/20">${e.nombre} ${n ? `<span class="opacity-60">(${n})</span>` : ''}</button>`;
+  }).join('');
+  nav.querySelectorAll('[data-est]').forEach((btn) => {
+    btn.addEventListener('click', () => { estacionActiva = btn.dataset.est; renderTabs(); renderItems(); });
+  });
+}
+
+function semaforo(item) {
+  const elapsedMs = Date.now() - item.creadoEn;
+  const metaMs = item.tiempoPrepMin * 60000;
+  const ratio = elapsedMs / metaMs;
+  if (ratio < 0.7) return { color: 'border-green-500', texto: 'text-green-400' };
+  if (ratio < 1) return { color: 'border-amber-500', texto: 'text-amber-400' };
+  return { color: 'border-red-500', texto: 'text-red-400' };
+}
+
+function formatoTiempo(ms) {
+  const totalSeg = Math.max(0, Math.floor(ms / 1000));
+  const min = String(Math.floor(totalSeg / 60)).padStart(2, '0');
+  const seg = String(totalSeg % 60).padStart(2, '0');
+  return `${min}:${seg}`;
+}
+
+function nombresIngredientes(ids) {
+  return ids.map((id) => (db.ingredientes.find((i) => i.id === id) || {}).nombre).filter(Boolean);
+}
+
+function renderItems() {
+  const cont = document.getElementById('grid-items');
+  const visibles = itemsActivos().filter((it) => estacionActiva === 'todas' || it.estacion === estacionActiva)
+    .sort((a, b) => a.creadoEn - b.creadoEn);
+  document.getElementById('sin-items').classList.toggle('hidden', visibles.length > 0);
+
+  cont.innerHTML = visibles.map((it) => {
+    const s = semaforo(it);
+    const sinIng = nombresIngredientes(it.ingredientesRemovidos);
+    return `
+    <article data-item="${it.id}" class="tarjeta-item animar-entrada bg-gray-800 border-2 ${s.color} rounded-2xl p-4">
+      <div class="flex items-start justify-between">
+        <span class="text-xs font-semibold bg-white/10 rounded-full px-2 py-0.5">MESA ${it.mesaNumero}</span>
+        <span data-timer class="tiempo text-sm font-bold ${s.texto}">${formatoTiempo(Date.now() - it.creadoEn)}</span>
+      </div>
+      <p class="font-semibold text-lg mt-2">${it.emoji || ''} ${it.nombreProducto} <span class="opacity-50">× ${it.cantidad}</span></p>
+      ${sinIng.length ? `<p class="text-sm text-red-300 mt-1">SIN ${sinIng.join(', ')}</p>` : ''}
+      ${it.adicionales.length ? `<p class="text-sm text-emerald-300 mt-1">+ ${it.adicionales.map((a) => a.nombre).join(', +')}</p>` : ''}
+      <button data-avanzar="${it.id}" class="w-full mt-4 rounded-xl py-2.5 font-semibold text-sm ${it.estado === 'pendiente' ? 'bg-white text-gray-900' : 'bg-emerald-500 text-white'}">
+        ${it.estado === 'pendiente' ? 'Iniciar preparación' : 'Marcar listo'}
+      </button>
+    </article>`;
+  }).join('');
+
+  cont.querySelectorAll('[data-avanzar]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const item = db.itemsPedido.find((it) => it.id === btn.dataset.avanzar);
+      const siguiente = item.estado === 'pendiente' ? 'en_preparacion' : 'listo';
+      actualizarEstadoItem(db, item.id, siguiente);
+      guardarDB(db);
+      if (siguiente === 'listo') {
+        const card = document.querySelector(`[data-item="${item.id}"]`);
+        if (card) card.classList.add('animar-salida');
+        setTimeout(() => { renderTabs(); renderItems(); }, 220);
+      } else {
+        renderTabs();
+        renderItems();
+      }
+    });
+  });
+}
+
+let toastTimeout;
+function mostrarToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => toast.classList.add('hidden'), 2400);
+}
+
+// Semáforo y cronómetro en vivo -- en producción esto lo dispara cualquier
+// tick de UI local; los cambios de ESTADO llegan por SSE (sec. 12), el
+// tiempo transcurrido se calcula en el cliente sin pedirle nada al backend.
+setInterval(() => {
+  document.querySelectorAll('[data-item]').forEach((card) => {
+    const item = db.itemsPedido.find((it) => it.id === card.dataset.item);
+    if (!item) return;
+    const s = semaforo(item);
+    card.className = `tarjeta-item animar-entrada bg-gray-800 border-2 ${s.color} rounded-2xl p-4`;
+    const timerEl = card.querySelector('[data-timer]');
+    timerEl.textContent = formatoTiempo(Date.now() - item.creadoEn);
+    timerEl.className = `tiempo text-sm font-bold ${s.texto}`;
+  });
+}, 1000);
+
+// ---------- Reaccion a pedidos nuevos desde el menú del cliente / mesero ----------
+suscribirseEvento('db-actualizada', () => {
+  const idsAntes = new Set(itemsActivos().map((i) => i.id));
+  db = cargarDB();
+  const nuevos = itemsActivos().filter((i) => !idsAntes.has(i.id));
+  renderTabs();
+  renderItems();
+  if (nuevos.length > 0) {
+    reproducirBeep();
+    mostrarToast(`🆕 Nuevo pedido — Mesa ${nuevos[0].mesaNumero}: ${nuevos.map((n) => n.nombreProducto).join(', ')}`);
+  }
+});
+
+renderTabs();
+renderItems();
+</script>
+</body>
+</html>
