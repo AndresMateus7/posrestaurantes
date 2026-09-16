@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SaaS de Restaurantes — Prototipos</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  body { background: #F3F4F6; font-family: 'Inter', sans-serif; }
+  h1, h2, .titulo { font-family: 'Poppins', sans-serif; }
+</style>
+</head>
+<body class="min-h-screen">
+  <main class="max-w-3xl mx-auto px-4 py-12">
+    <h1 class="titulo text-2xl font-bold text-gray-900">🍽️ SaaS de Restaurantes — Prototipos</h1>
+    <p class="text-sm text-gray-500 mt-2 max-w-xl">
+      Las 4 pantallas comparten datos en vivo entre pestañas (localStorage +
+      BroadcastChannel, ver <code>datos-compartidos.js</code>). Ábrelas en
+      pestañas separadas del mismo navegador para ver la conexión en tiempo real.
+    </p>
+
+    <div class="grid sm:grid-cols-2 gap-4 mt-8">
+      <a href="menu-cliente.html?mesa=1" class="block bg-white rounded-2xl shadow-sm p-5 hover:shadow-md transition border border-black/5">
+        <span class="text-2xl">📱</span>
+        <h2 class="titulo font-semibold mt-2">Menú del cliente</h2>
+        <p class="text-sm text-gray-500 mt-1">Vista de la mesa 1 — pide, llama al mesero, pide la cuenta.</p>
+      </a>
+      <a href="mesero.html" class="block bg-white rounded-2xl shadow-sm p-5 hover:shadow-md transition border border-black/5">
+        <span class="text-2xl">🧑‍🍳</span>
+        <h2 class="titulo font-semibold mt-2">Panel de mesero</h2>
+        <p class="text-sm text-gray-500 mt-1">Mapa de mesas y llamados pendientes.</p>
+      </a>
+      <a href="cocina.html" class="block bg-white rounded-2xl shadow-sm p-5 hover:shadow-md transition border border-black/5">
+        <span class="text-2xl">🍳</span>
+        <h2 class="titulo font-semibold mt-2">KDS de cocina</h2>
+        <p class="text-sm text-gray-500 mt-1">Cola de pedidos por estación, con semáforo.</p>
+      </a>
+      <a href="admin.html" class="block bg-white rounded-2xl shadow-sm p-5 hover:shadow-md transition border border-black/5">
+        <span class="text-2xl">⚙️</span>
+        <h2 class="titulo font-semibold mt-2">Panel de administrador</h2>
+        <p class="text-sm text-gray-500 mt-1">Tema, productos/receta, inventario, plano del local.</p>
+      </a>
+    </div>
+
+    <div class="mt-8 text-sm text-gray-500 space-y-1">
+      <p>📄 <a href="schema.sql" class="text-blue-600 underline">schema.sql</a> — estructura de base de datos.</p>
+      <p>📄 <a href="arquitectura-backend.md" class="text-blue-600 underline">arquitectura-backend.md</a> — diseño de API y tiempo real.</p>
+    </div>
+  </main>
+</body>
+</html>
