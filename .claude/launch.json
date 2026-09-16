@@ -2,9 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "restaurant-saas-preview",
+      "name": "posrestaurantes-dev",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["node_modules\\next\\dist\\bin\\next", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "legacy-prototipo-preview",
       "runtimeExecutable": "C:\\Users\\Administrador\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe",
-      "runtimeArgs": ["-m", "http.server", "8964", "--directory", "C:\\Users\\Administrador\\restaurant-saas"],
+      "runtimeArgs": ["-m", "http.server", "8964", "--directory", "C:\\Users\\Administrador\\restaurant-saas\\legacy-prototipo"],
       "port": 8964
     }
   ]

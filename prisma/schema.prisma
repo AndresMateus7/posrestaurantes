@@ -1,0 +1,556 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Sin "url" aqui a proposito (Prisma 7 + driver adapter de Neon): la
+// conexion la entrega el adapter al instanciar PrismaClient (ver
+// src/lib/prisma.ts), no el schema. Mismo patron ya probado en plataforma-sst.
+datasource db {
+  provider = "postgresql"
+}
+
+// =====================================================================
+// Enums (ver schema.sql para el detalle de cada uno)
+// =====================================================================
+
+enum RolUsuario {
+  admin
+  mesero
+  cocina
+  caja
+}
+
+enum EstadoMesa {
+  libre
+  ocupada
+  pedido_servido
+  cuenta_solicitada
+  reservada
+}
+
+enum EstacionCocina {
+  bar
+  parrilla
+  cocina_general
+}
+
+enum EstadoPedido {
+  recibido
+  en_preparacion
+  listo
+  entregado
+  cancelado
+}
+
+enum OrigenPedido {
+  qr_cliente
+  mesero
+  mostrador
+}
+
+enum EstadoItemPedido {
+  pendiente
+  en_preparacion
+  listo
+  entregado
+  cancelado
+}
+
+enum EstadoCuenta {
+  abierta
+  dividida
+  pagada
+  anulada
+}
+
+enum TipoDivisionCuenta {
+  partes_iguales
+  por_items
+}
+
+enum MetodoPago {
+  efectivo
+  tarjeta_credito
+  tarjeta_debito
+  nequi
+  daviplata
+  transferencia
+}
+
+enum EstadoTurno {
+  abierto
+  cerrado
+}
+
+enum TipoMovimientoCaja {
+  venta
+  retiro
+  ingreso_manual
+}
+
+enum TipoMovimientoInventario {
+  entrada
+  salida
+  ajuste
+}
+
+enum TipoLlamado {
+  llamar_mesero
+  solicitar_cuenta
+}
+
+// =====================================================================
+// 1. Tenants y usuarios
+// =====================================================================
+
+model Restaurante {
+  id            String   @id @default(uuid())
+  nombre        String
+  slug          String   @unique
+  nit           String?
+  emailContacto String   @map("email_contacto")
+  telefono      String?
+  direccion     String?
+  rotaQr        Boolean  @default(false) @map("rota_qr")
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now()) @map("creado_en")
+
+  tema          ConfiguracionTema?
+  usuarios      Usuario[]
+  planos        Plano[]
+  mesas         Mesa[]
+  categorias    CategoriaMenu[]
+  productos     Producto[]
+  ingredientes  Ingrediente[]
+  adicionales   Adicional[]
+  pedidos       Pedido[]
+  cuentas       Cuenta[]
+  turnosCaja    TurnoCaja[]
+  llamados      LlamadoMesa[]
+
+  @@map("restaurantes")
+}
+
+model ConfiguracionTema {
+  id              String   @id @default(uuid())
+  restauranteId   String   @unique @map("restaurante_id")
+  restaurante     Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  logoUrl         String?  @map("logo_url")
+  faviconUrl      String?  @map("favicon_url")
+  colorPrimario   String   @default("#DC2626") @map("color_primario")
+  colorSecundario String   @default("#1F2937") @map("color_secundario")
+  colorFondo      String   @default("#F9FAFB") @map("color_fondo")
+  colorTexto      String   @default("#111827") @map("color_texto")
+  fuente          String   @default("Poppins")
+  actualizadoEn   DateTime @updatedAt @map("actualizado_en")
+
+  @@map("configuracion_tema")
+}
+
+model Usuario {
+  id           String     @id @default(uuid())
+  restauranteId String    @map("restaurante_id")
+  restaurante  Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  nombre       String
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  rol          RolUsuario
+  activo       Boolean    @default(true)
+  creadoEn     DateTime   @default(now()) @map("creado_en")
+
+  mesasAsignadas       Mesa[]              @relation("MesaMesero")
+  pedidosTomados       Pedido[]            @relation("PedidoMesero")
+  pagosRecibidos       Pago[]              @relation("PagoRecibidoPor")
+  turnos               TurnoCaja[]
+  llamadosAtendidos    LlamadoMesa[]       @relation("LlamadoAtendidoPor")
+  movimientosInventario MovimientoInventario[]
+
+  @@index([restauranteId])
+  @@map("usuarios")
+}
+
+// =====================================================================
+// 2. Plano 2D y mesas
+// =====================================================================
+
+model Plano {
+  id            String   @id @default(uuid())
+  restauranteId String   @map("restaurante_id")
+  restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  nombre        String   @default("Principal")
+  // Array de figuras: [{ id, tipo, forma, x, y, ancho, alto, rotacion }]
+  // Se valida en la capa de aplicacion (Zod), no aqui - ver schema.sql.
+  layout        Json     @default("[]")
+  actualizadoEn DateTime @updatedAt @map("actualizado_en")
+  creadoEn      DateTime @default(now()) @map("creado_en")
+
+  mesas         Mesa[]
+
+  @@map("planos")
+}
+
+model Mesa {
+  id            String     @id @default(uuid())
+  restauranteId String     @map("restaurante_id")
+  restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  planoId       String     @map("plano_id")
+  plano         Plano      @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  elementoId    String     @map("elemento_id")
+  numero        String
+  capacidad     Int        @default(4)
+  estado        EstadoMesa @default(libre)
+  qrToken       String     @unique @default(uuid()) @map("qr_token")
+  meseroId      String?    @map("mesero_id")
+  mesero        Usuario?   @relation("MesaMesero", fields: [meseroId], references: [id], onDelete: SetNull)
+  actualizadoEn DateTime   @updatedAt @map("actualizado_en")
+  creadoEn      DateTime   @default(now()) @map("creado_en")
+
+  pedidos       Pedido[]
+  cuentas       Cuenta[]
+  llamados      LlamadoMesa[]
+
+  @@unique([planoId, elementoId])
+  @@index([restauranteId, estado])
+  @@map("mesas")
+}
+
+// =====================================================================
+// 3. Menu: categorias, productos, alergenos
+// =====================================================================
+
+model CategoriaMenu {
+  id            String   @id @default(uuid())
+  restauranteId String   @map("restaurante_id")
+  restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  nombre        String
+  descripcion   String?
+  imagenUrl     String?  @map("imagen_url")
+  orden         Int      @default(0)
+  activo        Boolean  @default(true)
+
+  productos     Producto[]
+
+  @@index([restauranteId, orden])
+  @@map("categorias_menu")
+}
+
+model Alergeno {
+  id     String @id @default(uuid())
+  nombre String @unique
+  icono  String?
+
+  productos ProductoAlergeno[]
+
+  @@map("alergenos")
+}
+
+model Producto {
+  id                 String   @id @default(uuid())
+  restauranteId      String   @map("restaurante_id")
+  restaurante        Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  categoriaId        String   @map("categoria_id")
+  categoria          CategoriaMenu @relation(fields: [categoriaId], references: [id], onDelete: Restrict)
+  nombre             String
+  descripcion        String?
+  precio             Int
+  imagenUrl          String?  @map("imagen_url")
+  estacion           EstacionCocina @default(cocina_general)
+  tiempoPreparacionMin Int    @default(15) @map("tiempo_preparacion_min")
+  disponible         Boolean  @default(true)
+  orden              Int      @default(0)
+  creadoEn           DateTime @default(now()) @map("creado_en")
+
+  alergenos          ProductoAlergeno[]
+  ingredientes       ProductoIngrediente[]
+  adicionales        ProductoAdicional[]
+  itemsPedido        ItemPedido[]
+
+  @@index([restauranteId, categoriaId])
+  @@index([restauranteId, disponible])
+  @@map("productos")
+}
+
+model ProductoAlergeno {
+  productoId String   @map("producto_id")
+  producto   Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  alergenoId String   @map("alergeno_id")
+  alergeno   Alergeno @relation(fields: [alergenoId], references: [id], onDelete: Cascade)
+
+  @@id([productoId, alergenoId])
+  @@map("producto_alergenos")
+}
+
+// =====================================================================
+// 4. Ingredientes, receta e inventario
+// =====================================================================
+
+model Ingrediente {
+  id            String   @id @default(uuid())
+  restauranteId String   @map("restaurante_id")
+  restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  nombre        String
+  unidadMedida  String   @default("g") @map("unidad_medida")
+  stockActual   Decimal  @default(0) @db.Decimal(10, 2) @map("stock_actual")
+  stockMinimo   Decimal  @default(0) @db.Decimal(10, 2) @map("stock_minimo")
+  actualizadoEn DateTime @updatedAt @map("actualizado_en")
+
+  recetas       ProductoIngrediente[]
+  adicionales   Adicional[]
+  movimientos   MovimientoInventario[]
+
+  @@unique([restauranteId, nombre])
+  @@map("ingredientes")
+}
+
+model ProductoIngrediente {
+  id             String      @id @default(uuid())
+  productoId     String      @map("producto_id")
+  producto       Producto    @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  ingredienteId  String      @map("ingrediente_id")
+  ingrediente    Ingrediente @relation(fields: [ingredienteId], references: [id], onDelete: Restrict)
+  cantidadUsada  Decimal     @db.Decimal(10, 2) @map("cantidad_usada")
+  removible      Boolean     @default(true)
+
+  @@unique([productoId, ingredienteId])
+  @@map("producto_ingredientes")
+}
+
+model MovimientoInventario {
+  id            String   @id @default(uuid())
+  ingredienteId String   @map("ingrediente_id")
+  ingrediente   Ingrediente @relation(fields: [ingredienteId], references: [id], onDelete: Cascade)
+  tipo          TipoMovimientoInventario
+  cantidad      Decimal  @db.Decimal(10, 2)
+  motivo        String?
+  usuarioId     String?  @map("usuario_id")
+  usuario       Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  creadoEn      DateTime @default(now()) @map("creado_en")
+
+  @@index([ingredienteId, creadoEn])
+  @@map("movimientos_inventario")
+}
+
+// =====================================================================
+// 5. Adicionales (extras pagos)
+// =====================================================================
+
+model Adicional {
+  id             String   @id @default(uuid())
+  restauranteId  String   @map("restaurante_id")
+  restaurante    Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  nombre         String
+  precio         Int
+  ingredienteId  String?  @map("ingrediente_id")
+  ingrediente    Ingrediente? @relation(fields: [ingredienteId], references: [id], onDelete: SetNull)
+  cantidadUsada  Decimal? @db.Decimal(10, 2) @map("cantidad_usada")
+  activo         Boolean  @default(true)
+
+  productos         ProductoAdicional[]
+  itemsPedidoAdicionales ItemPedidoAdicional[]
+
+  @@index([restauranteId])
+  @@map("adicionales")
+}
+
+model ProductoAdicional {
+  productoId  String    @map("producto_id")
+  producto    Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  adicionalId String    @map("adicional_id")
+  adicional   Adicional @relation(fields: [adicionalId], references: [id], onDelete: Cascade)
+
+  @@id([productoId, adicionalId])
+  @@map("producto_adicionales")
+}
+
+// =====================================================================
+// 6. Pedidos e items
+// =====================================================================
+
+model Pedido {
+  id             String   @id @default(uuid())
+  restauranteId  String   @map("restaurante_id")
+  restaurante    Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  mesaId         String   @map("mesa_id")
+  mesa           Mesa     @relation(fields: [mesaId], references: [id], onDelete: Restrict)
+  cuentaId       String?  @map("cuenta_id")
+  cuenta         Cuenta?  @relation(fields: [cuentaId], references: [id], onDelete: SetNull)
+  origen         OrigenPedido @default(qr_cliente)
+  meseroId       String?  @map("mesero_id")
+  mesero         Usuario? @relation("PedidoMesero", fields: [meseroId], references: [id], onDelete: SetNull)
+  estado         EstadoPedido @default(recibido)
+  notasGenerales String?  @map("notas_generales")
+  creadoEn       DateTime @default(now()) @map("creado_en")
+  actualizadoEn  DateTime @updatedAt @map("actualizado_en")
+
+  items          ItemPedido[]
+
+  @@index([restauranteId, estado])
+  @@index([mesaId])
+  @@map("pedidos")
+}
+
+model ItemPedido {
+  id                    String   @id @default(uuid())
+  pedidoId              String   @map("pedido_id")
+  pedido                Pedido   @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  productoId            String   @map("producto_id")
+  producto              Producto @relation(fields: [productoId], references: [id], onDelete: Restrict)
+  cantidad              Int
+  precioUnitario        Int      @map("precio_unitario")
+  estacion              EstacionCocina
+  ingredientesRemovidos Json     @default("[]") @map("ingredientes_removidos")
+  notas                 String?
+  estado                EstadoItemPedido @default(pendiente)
+  creadoEn              DateTime @default(now()) @map("creado_en")
+  listoEn               DateTime? @map("listo_en")
+
+  adicionales           ItemPedidoAdicional[]
+  subCuentaItems        SubCuentaItem[]
+
+  @@index([pedidoId])
+  @@index([estacion, estado])
+  @@map("items_pedido")
+}
+
+model ItemPedidoAdicional {
+  id             String     @id @default(uuid())
+  itemPedidoId   String     @map("item_pedido_id")
+  itemPedido     ItemPedido @relation(fields: [itemPedidoId], references: [id], onDelete: Cascade)
+  adicionalId    String     @map("adicional_id")
+  adicional      Adicional  @relation(fields: [adicionalId], references: [id], onDelete: Restrict)
+  cantidad       Int        @default(1)
+  precioUnitario Int        @map("precio_unitario")
+
+  @@index([itemPedidoId])
+  @@map("item_pedido_adicionales")
+}
+
+// =====================================================================
+// 7. Cuentas, division y pagos
+// =====================================================================
+
+model Cuenta {
+  id            String   @id @default(uuid())
+  restauranteId String   @map("restaurante_id")
+  restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  mesaId        String   @map("mesa_id")
+  mesa          Mesa     @relation(fields: [mesaId], references: [id], onDelete: Restrict)
+  estado        EstadoCuenta @default(abierta)
+  subtotal      Int      @default(0)
+  propina       Int      @default(0)
+  total         Int      @default(0)
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  cerradoEn     DateTime? @map("cerrado_en")
+
+  pedidos       Pedido[]
+  subCuentas    SubCuenta[]
+  pagos         Pago[]
+
+  @@index([restauranteId, estado])
+  @@index([mesaId])
+  @@map("cuentas")
+}
+
+model SubCuenta {
+  id            String   @id @default(uuid())
+  cuentaId      String   @map("cuenta_id")
+  cuenta        Cuenta   @relation(fields: [cuentaId], references: [id], onDelete: Cascade)
+  tipoDivision  TipoDivisionCuenta @map("tipo_division")
+  etiqueta      String   @default("Comensal")
+  monto         Int      @default(0)
+  pagado        Boolean  @default(false)
+  creadoEn      DateTime @default(now()) @map("creado_en")
+
+  items         SubCuentaItem[]
+  pagos         Pago[]
+
+  @@index([cuentaId])
+  @@map("sub_cuentas")
+}
+
+model SubCuentaItem {
+  id               String     @id @default(uuid())
+  subCuentaId      String     @map("sub_cuenta_id")
+  subCuenta        SubCuenta  @relation(fields: [subCuentaId], references: [id], onDelete: Cascade)
+  itemPedidoId     String     @map("item_pedido_id")
+  itemPedido       ItemPedido @relation(fields: [itemPedidoId], references: [id], onDelete: Cascade)
+  cantidadAsignada Int        @map("cantidad_asignada")
+
+  @@index([itemPedidoId])
+  @@map("sub_cuenta_items")
+}
+
+model Pago {
+  id                     String     @id @default(uuid())
+  cuentaId               String     @map("cuenta_id")
+  cuenta                 Cuenta     @relation(fields: [cuentaId], references: [id], onDelete: Cascade)
+  subCuentaId            String?    @map("sub_cuenta_id")
+  subCuenta              SubCuenta? @relation(fields: [subCuentaId], references: [id], onDelete: SetNull)
+  metodo                 MetodoPago
+  monto                  Int
+  referenciaTransaccion  String?    @map("referencia_transaccion")
+  recibidoPor            String?    @map("recibido_por")
+  usuario                Usuario?   @relation("PagoRecibidoPor", fields: [recibidoPor], references: [id], onDelete: SetNull)
+  creadoEn               DateTime   @default(now()) @map("creado_en")
+
+  @@index([cuentaId])
+  @@map("pagos")
+}
+
+// =====================================================================
+// 8. Caja: turnos y arqueo
+// =====================================================================
+
+model TurnoCaja {
+  id                   String   @id @default(uuid())
+  restauranteId        String   @map("restaurante_id")
+  restaurante          Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  usuarioId            String   @map("usuario_id")
+  usuario              Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  estado               EstadoTurno @default(abierto)
+  montoInicial         Int      @default(0) @map("monto_inicial")
+  montoFinalDeclarado  Int?     @map("monto_final_declarado")
+  montoFinalSistema    Int?     @map("monto_final_sistema")
+  diferencia           Int?
+  abiertoEn            DateTime @default(now()) @map("abierto_en")
+  cerradoEn            DateTime? @map("cerrado_en")
+
+  movimientos          MovimientoCaja[]
+
+  @@index([restauranteId, estado])
+  @@map("turnos_caja")
+}
+
+model MovimientoCaja {
+  id          String   @id @default(uuid())
+  turnoId     String   @map("turno_id")
+  turno       TurnoCaja @relation(fields: [turnoId], references: [id], onDelete: Cascade)
+  tipo        TipoMovimientoCaja
+  monto       Int
+  descripcion String?
+  creadoEn    DateTime @default(now()) @map("creado_en")
+
+  @@index([turnoId])
+  @@map("movimientos_caja")
+}
+
+// =====================================================================
+// 9. Llamados de mesa
+// =====================================================================
+
+model LlamadoMesa {
+  id            String   @id @default(uuid())
+  restauranteId String   @map("restaurante_id")
+  restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  mesaId        String   @map("mesa_id")
+  mesa          Mesa     @relation(fields: [mesaId], references: [id], onDelete: Cascade)
+  tipo          TipoLlamado
+  atendido      Boolean  @default(false)
+  creadoEn      DateTime @default(now()) @map("creado_en")
+  atendidoEn    DateTime? @map("atendido_en")
+  atendidoPor   String?  @map("atendido_por")
+  usuario       Usuario? @relation("LlamadoAtendidoPor", fields: [atendidoPor], references: [id], onDelete: SetNull)
+
+  @@index([restauranteId, atendido])
+  @@map("llamados_mesa")
+}
