@@ -3,9 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
 
-type Mesa = { id: string; numero: string; capacidad: number; estado: string };
+type Mesa = { id: string; elementoId: string; numero: string; capacidad: number; estado: string };
 type Llamado = { id: string; tipo: "llamar_mesero" | "solicitar_cuenta"; mesaNumero: string; creadoEn: string };
 type ItemCuenta = { id: string; nombreProducto: string; cantidad: number; estado: string; pedidoId: string; adicionales: string[] };
+type TipoElemento = "mesa" | "barra" | "pared" | "caja" | "cocina" | "decoracion";
+type ElementoPlano = { id: string; tipo: TipoElemento; forma?: "cuadrada" | "redonda" | "rectangular"; x: number; y: number; ancho: number; alto: number; rotacion: number };
+
+const ICONO_ELEMENTO: Record<string, string> = { barra: "🍹 Barra", pared: "Pared", caja: "💳 Caja", cocina: "🍳 Cocina", decoracion: "Decoración" };
 
 const ESTILO_ESTADO: Record<string, { label: string; clase: string }> = {
   libre: { label: "Libre", clase: "bg-gray-100 border-gray-300 text-gray-600" },
@@ -19,13 +23,23 @@ const formatoCOP = (v: number) => "$" + v.toLocaleString("es-CO");
 
 export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: string; rotaQr: boolean }) {
   const [mesas, setMesas] = useState<Mesa[]>([]);
+  const [layout, setLayout] = useState<ElementoPlano[]>([]);
   const [llamados, setLlamados] = useState<Llamado[]>([]);
   const [nuevosIds, setNuevosIds] = useState<Set<string>>(new Set());
   const [mesaAbierta, setMesaAbierta] = useState<Mesa | null>(null);
   const [cuenta, setCuenta] = useState<{ total: number; items: ItemCuenta[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  const cargarMesas = useCallback(() => fetch("/api/mesas").then((r) => r.json()).then(setMesas), []);
+  const cargarMesas = useCallback(
+    () =>
+      fetch("/api/plano")
+        .then((r) => r.json())
+        .then((data) => {
+          setLayout(data.plano.layout);
+          setMesas(data.mesas);
+        }),
+    []
+  );
   const cargarLlamados = useCallback(() => fetch("/api/llamados").then((r) => r.json()).then(setLlamados), []);
   const cargarCuenta = useCallback((mesaId: string) => fetch(`/api/mesas/${mesaId}/cuenta`).then((r) => r.json()).then(setCuenta), []);
 
@@ -70,6 +84,7 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
     "pedido-creado": () => cargarMesas(),
     "item-actualizado": () => cargarMesas(),
     "pedido-entregado": () => cargarMesas(),
+    "plano-actualizado": () => cargarMesas(),
   });
 
   useEffect(() => {
@@ -149,22 +164,46 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Mapa de mesas</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {mesas.map((m) => {
-              const estilo = ESTILO_ESTADO[m.estado] ?? ESTILO_ESTADO.libre;
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => setMesaAbierta(m)}
-                  className={`rounded-2xl border-2 p-4 text-left transition hover:brightness-95 ${estilo.clase}`}
-                >
-                  <p className="text-2xl font-bold">{m.numero}</p>
-                  <p className="text-xs font-medium mt-1">{estilo.label}</p>
-                  <p className="text-[11px] opacity-60 mt-0.5">{m.capacidad} puestos</p>
-                </button>
-              );
-            })}
+          <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Plano del local</h2>
+          <div className="flex gap-3 text-[11px] flex-wrap mb-2">
+            {Object.values(ESTILO_ESTADO).map((e) => (
+              <span key={e.label} className={`flex items-center gap-1 px-2 py-0.5 rounded-full border ${e.clase}`}>
+                {e.label}
+              </span>
+            ))}
+          </div>
+          <div className="overflow-x-auto bg-white rounded-2xl shadow-sm border border-gray-200">
+            <div
+              className="relative"
+              style={{ height: 520, minWidth: 600, backgroundImage: "radial-gradient(#E5E7EB 1px, transparent 1px)", backgroundSize: "16px 16px" }}
+            >
+              {layout.map((f) => {
+                if (f.tipo === "mesa") {
+                  const mesa = mesas.find((m) => m.elementoId === f.id);
+                  const estilo = ESTILO_ESTADO[mesa?.estado ?? "libre"] ?? ESTILO_ESTADO.libre;
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => mesa && setMesaAbierta(mesa)}
+                      className={`absolute flex flex-col items-center justify-center border-2 rounded-lg ${estilo.clase}`}
+                      style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, borderRadius: f.forma === "redonda" ? 9999 : 10, transform: `rotate(${f.rotacion ?? 0}deg)` }}
+                    >
+                      <span className="font-bold text-lg leading-none">{mesa?.numero ?? "?"}</span>
+                      <span className="text-[10px] opacity-70">{mesa ? `${mesa.capacidad}p` : ""}</span>
+                    </button>
+                  );
+                }
+                return (
+                  <div
+                    key={f.id}
+                    className="absolute flex items-center justify-center text-center text-xs font-medium border-2 border-dashed border-gray-400 bg-gray-50 text-gray-500 rounded-lg px-1"
+                    style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, transform: `rotate(${f.rotacion ?? 0}deg)` }}
+                  >
+                    {ICONO_ELEMENTO[f.tipo] ?? f.tipo}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </section>
       </main>

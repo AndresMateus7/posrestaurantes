@@ -9,6 +9,7 @@ type Producto = {
   id: string;
   nombre: string;
   precio: number;
+  imagenUrl: string | null;
   disponible: boolean;
   disponibleEfectivo: boolean;
   categoria: { nombre: string };
@@ -31,6 +32,15 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
     fetch("/api/ingredientes").then((r) => r.json()).then(setIngredientes);
     fetch("/api/adicionales").then((r) => r.json()).then(setAdicionales);
   }, [cargar]);
+
+  async function guardarImagen(p: Producto, imagenUrl: string) {
+    await fetch(`/api/productos/${p.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imagenUrl: imagenUrl.trim() || null }),
+    });
+    cargar();
+  }
 
   async function toggleManual(p: Producto) {
     await fetch(`/api/productos/${p.id}/disponibilidad`, {
@@ -90,6 +100,9 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
         return (
           <div key={p.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <button onClick={() => setExpandido(abierto ? null : p.id)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
+              <span className="w-10 h-10 rounded-lg overflow-hidden shrink-0 grid place-items-center text-lg bg-gray-100">
+                {p.imagenUrl ? <img src={p.imagenUrl} alt={p.nombre} className="w-full h-full object-cover" /> : "🍽️"}
+              </span>
               <span className="font-medium flex-1">{p.nombre}</span>
               <span className="text-xs opacity-50">{p.categoria.nombre}</span>
               <span className="font-semibold text-sm w-20 text-right">{formatoCOP(p.precio)}</span>
@@ -107,6 +120,21 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
             </button>
             {abierto && (
               <div className="border-t border-gray-100 px-4 py-4 space-y-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase opacity-50 mb-2">Foto del producto</p>
+                  <div className="flex items-center gap-3">
+                    <span className="w-16 h-16 rounded-xl overflow-hidden shrink-0 grid place-items-center text-2xl bg-gray-100">
+                      {p.imagenUrl ? <img src={p.imagenUrl} alt={p.nombre} className="w-full h-full object-cover" /> : "🍽️"}
+                    </span>
+                    <input
+                      type="url"
+                      defaultValue={p.imagenUrl ?? ""}
+                      onBlur={(e) => guardarImagen(p, e.target.value)}
+                      placeholder="https://... enlace a la foto del plato"
+                      className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                    />
+                  </div>
+                </div>
                 <div>
                   <p className="text-xs font-semibold uppercase opacity-50 mb-2">Receta (ingredientes y peso usado)</p>
                   <div className="space-y-1.5">

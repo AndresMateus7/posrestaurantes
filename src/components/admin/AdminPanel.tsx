@@ -6,6 +6,7 @@ import { ProductosTab } from "./ProductosTab";
 import { InventarioTab } from "./InventarioTab";
 import { MesasTab } from "./MesasTab";
 import { PlanoTab } from "./PlanoTab";
+import { UsuariosTab } from "./UsuariosTab";
 
 const TABS = [
   { id: "tema", nombre: "Tema" },
@@ -13,6 +14,7 @@ const TABS = [
   { id: "inventario", nombre: "Inventario" },
   { id: "mesas", nombre: "Mesas y QR" },
   { id: "plano", nombre: "Plano del local" },
+  { id: "usuarios", nombre: "Usuarios" },
 ] as const;
 
 export function AdminPanel({ restauranteNombre }: { restauranteNombre: string }) {
@@ -50,6 +52,7 @@ export function AdminPanel({ restauranteNombre }: { restauranteNombre: string })
         {tab === "inventario" && <InventarioTab onCambio={mostrarToast} />}
         {tab === "mesas" && <MesasTab onCambio={mostrarToast} />}
         {tab === "plano" && <PlanoTab onCambio={mostrarToast} />}
+        {tab === "usuarios" && <UsuariosTab onCambio={mostrarToast} />}
       </main>
 
       {toast && (

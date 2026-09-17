@@ -11,6 +11,7 @@ type Producto = {
   nombre: string;
   descripcion: string | null;
   precio: number;
+  imagenUrl: string | null;
   disponibleEfectivo: boolean;
   alergenos: Alergeno[];
   ingredientes: Ingrediente[];
@@ -192,8 +193,8 @@ export function MenuCliente({ token }: { token: string }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {productosVisibles.map((p) => (
             <article key={p.id} className={`rounded-2xl overflow-hidden shadow-sm border border-black/5 flex flex-col ${!p.disponibleEfectivo ? "grayscale opacity-60" : ""}`} style={{ background: "#fff" }}>
-              <div className="h-28 grid place-items-center text-4xl relative" style={{ background: "color-mix(in srgb, var(--color-primario) 10%, transparent)" }}>
-                🍽️
+              <div className="h-28 grid place-items-center text-4xl relative overflow-hidden" style={{ background: "color-mix(in srgb, var(--color-primario) 10%, transparent)" }}>
+                {p.imagenUrl ? <img src={p.imagenUrl} alt={p.nombre} className="w-full h-full object-cover" /> : "🍽️"}
                 {!p.disponibleEfectivo && <span className="absolute top-2 right-2 bg-gray-800 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">AGOTADO</span>}
               </div>
               <div className="p-4 flex flex-col flex-1">
@@ -239,7 +240,13 @@ export function MenuCliente({ token }: { token: string }) {
           <div className="absolute inset-0 bg-black/50" onClick={() => setModalProducto(null)} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl" style={{ background: "#fff" }}>
             <div className="p-5">
-              <div className="w-full h-32 rounded-2xl grid place-items-center text-5xl mb-4" style={{ background: "color-mix(in srgb, var(--color-primario) 12%, transparent)" }}>🍽️</div>
+              <div className="w-full h-32 rounded-2xl grid place-items-center text-5xl mb-4 overflow-hidden" style={{ background: "color-mix(in srgb, var(--color-primario) 12%, transparent)" }}>
+                {modalProducto.producto.imagenUrl ? (
+                  <img src={modalProducto.producto.imagenUrl} alt={modalProducto.producto.nombre} className="w-full h-full object-cover" />
+                ) : (
+                  "🍽️"
+                )}
+              </div>
               <h3 className="text-lg font-semibold">{modalProducto.producto.nombre}</h3>
               <p className="text-sm opacity-70 mt-1">{modalProducto.producto.descripcion}</p>
               <div className="flex flex-wrap gap-1 mt-2">

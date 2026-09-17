@@ -46,6 +46,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
       nombre: p.nombre,
       descripcion: p.descripcion,
       precio: p.precio,
+      imagenUrl: p.imagenUrl,
       estacion: p.estacion,
       disponibleEfectivo: disponibleEfectivo(p),
       alergenos: p.alergenos.map((a) => ({ id: a.alergeno.id, nombre: a.alergeno.nombre, icono: a.alergeno.icono })),

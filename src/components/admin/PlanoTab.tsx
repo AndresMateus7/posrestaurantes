@@ -112,6 +112,12 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
     guardar(nuevoLayout);
   }
 
+  function cambiarRotacion(figuraId: string, rotacion: number) {
+    const nuevoLayout = layout.map((f) => (f.id === figuraId ? { ...f, rotacion } : f));
+    setLayout(nuevoLayout);
+    guardar(nuevoLayout);
+  }
+
   function eliminar(figuraId: string) {
     const nuevoLayout = layout.filter((f) => f.id !== figuraId);
     setLayout(nuevoLayout);
@@ -153,7 +159,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                   key={f.id}
                   onPointerDown={(e) => onPointerDown(e, f)}
                   className={`absolute flex flex-col items-center justify-center border-2 cursor-move select-none rounded-lg ${clase} ${seleccionadoClase}`}
-                  style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, borderRadius: f.forma === "redonda" ? 9999 : 10 }}
+                  style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, borderRadius: f.forma === "redonda" ? 9999 : 10, transform: `rotate(${f.rotacion ?? 0}deg)` }}
                 >
                   <span className="font-bold text-lg leading-none">{mesa?.numero ?? "?"}</span>
                   <span className="text-[10px] opacity-70">{mesa ? `${mesa.capacidad}p` : ""}</span>
@@ -165,7 +171,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                 key={f.id}
                 onPointerDown={(e) => onPointerDown(e, f)}
                 className={`absolute flex items-center justify-center text-center text-xs font-medium border-2 border-dashed border-gray-400 bg-gray-50 text-gray-500 cursor-move select-none rounded-lg px-1 ${seleccionadoClase}`}
-                style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto }}
+                style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, transform: `rotate(${f.rotacion ?? 0}deg)` }}
               >
                 {ICONO[f.tipo] ?? f.tipo}
               </div>
@@ -216,6 +222,17 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                   <option value="rectangular">Rectangular</option>
                 </select>
               </label>
+              <label className="block text-sm mb-3">
+                Rotación ({figuraSeleccionada.rotacion ?? 0}°)
+                <input
+                  type="range"
+                  min={0}
+                  max={359}
+                  value={figuraSeleccionada.rotacion ?? 0}
+                  onChange={(e) => cambiarRotacion(figuraSeleccionada.id, Number(e.target.value))}
+                  className="w-full mt-1"
+                />
+              </label>
               <p className="text-xs opacity-50 mb-3">
                 Estado actual: <b>{mesaSeleccionada.estado.replace("_", " ")}</b> (lo cambia el mesero/cliente, no se edita aquí)
               </p>
@@ -228,6 +245,17 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
           {figuraSeleccionada && figuraSeleccionada.tipo !== "mesa" && (
             <div>
               <p className="text-xs font-semibold uppercase opacity-50 mb-3">{ICONO[figuraSeleccionada.tipo] ?? figuraSeleccionada.tipo}</p>
+              <label className="block text-sm mb-3">
+                Rotación ({figuraSeleccionada.rotacion ?? 0}°)
+                <input
+                  type="range"
+                  min={0}
+                  max={359}
+                  value={figuraSeleccionada.rotacion ?? 0}
+                  onChange={(e) => cambiarRotacion(figuraSeleccionada.id, Number(e.target.value))}
+                  className="w-full mt-1"
+                />
+              </label>
               <button onClick={() => eliminar(figuraSeleccionada.id)} className="w-full border border-red-300 text-red-600 rounded-xl py-2 text-sm font-semibold">
                 Eliminar
               </button>
