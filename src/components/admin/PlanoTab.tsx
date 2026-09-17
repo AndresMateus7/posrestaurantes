@@ -32,6 +32,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const arrastre = useRef<{ id: string; offsetX: number; offsetY: number; movido: boolean } | null>(null);
   const redimension = useRef<{ id: string; anchoInicial: number; altoInicial: number; startX: number; startY: number; rotacionRad: number } | null>(null);
+  const giro = useRef<{ id: string; centerX: number; centerY: number } | null>(null);
 
   const cargar = useCallback(() => {
     fetch("/api/plano").then((r) => r.json()).then((data) => {
@@ -83,7 +84,29 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
 
+  function onRotatePointerDown(e: React.PointerEvent<HTMLDivElement>, figura: ElementoPlano) {
+    e.stopPropagation();
+    const canvasRect = canvasRef.current!.getBoundingClientRect();
+    giro.current = {
+      id: figura.id,
+      centerX: canvasRect.left + figura.x + figura.ancho / 2,
+      centerY: canvasRect.top + figura.y + figura.alto / 2,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
   function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (giro.current) {
+      const { id, centerX, centerY } = giro.current;
+      const dx = e.clientX - centerX;
+      const dy = e.clientY - centerY;
+      // 0 grados = manija apuntando hacia arriba; el angulo crece en
+      // sentido horario, igual que rotate() en CSS.
+      const grados = (((Math.atan2(dy, dx) * 180) / Math.PI + 90) % 360 + 360) % 360;
+      setLayout((prev) => prev.map((f) => (f.id === id ? { ...f, rotacion: Math.round(grados) } : f)));
+      return;
+    }
+
     if (redimension.current) {
       const { id, anchoInicial, altoInicial, startX, startY, rotacionRad } = redimension.current;
       const dx = e.clientX - startX;
@@ -118,6 +141,15 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
   }
 
   function onPointerUp() {
+    if (giro.current) {
+      giro.current = null;
+      setLayout((prev) => {
+        guardar(prev);
+        return prev;
+      });
+      return;
+    }
+
     if (redimension.current) {
       redimension.current = null;
       setLayout((prev) => {
@@ -204,6 +236,16 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                 style={{ right: -8, bottom: -8, touchAction: "none" }}
               />
             );
+            const manijaGiro = seleccionado === f.id && (
+              <>
+                <div className="absolute bg-gray-400" style={{ left: "50%", top: -20, width: 1, height: 20, transform: "translateX(-50%)" }} />
+                <div
+                  onPointerDown={(e) => onRotatePointerDown(e, f)}
+                  className="absolute w-4 h-4 bg-white border-2 border-blue-600 rounded-full cursor-grab z-10"
+                  style={{ left: "50%", top: -28, transform: "translateX(-50%)", touchAction: "none" }}
+                />
+              </>
+            );
             if (f.tipo === "mesa") {
               const clase = ESTILO_MESA[mesa?.estado ?? "libre"];
               return (
@@ -217,6 +259,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                     <span className="text-[10px] opacity-70">{mesa ? `${mesa.capacidad}p` : ""}</span>
                   </div>
                   {manija}
+                  {manijaGiro}
                 </div>
               );
             }
@@ -229,6 +272,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                   {ICONO[f.tipo] ?? f.tipo}
                 </div>
                 {manija}
+                {manijaGiro}
               </div>
             );
           })}
@@ -245,7 +289,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
 
           {!figuraSeleccionada && (
             <p className="text-sm opacity-40">
-              Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para seleccionarlo. Cuando esté seleccionado, arrastra el círculo de su esquina para agrandarlo o achicarlo.
+              Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para seleccionarlo. Ya seleccionado: el círculo de la esquina lo agranda o achica, y el círculo de arriba lo rota.
             </p>
           )}
 
