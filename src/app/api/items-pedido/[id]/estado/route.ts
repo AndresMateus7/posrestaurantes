@@ -4,7 +4,7 @@ import { actualizarEstadoItem } from "@/lib/pedidos";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireApiUser("cocina", "admin");
+    const user = await requireApiUser("cocina", "admin", "caja");
     const { id } = await params;
     const { estado } = (await req.json()) as { estado?: "en_preparacion" | "listo" };
     if (estado !== "en_preparacion" && estado !== "listo") {

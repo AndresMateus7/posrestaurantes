@@ -4,7 +4,7 @@ import { abrirMesa } from "@/lib/mesas";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireApiUser("mesero", "admin");
+    const user = await requireApiUser("mesero", "admin", "caja");
     const { id } = await params;
     const mesa = await abrirMesa(user.restauranteId, id, user.usuarioId);
     return NextResponse.json(mesa);

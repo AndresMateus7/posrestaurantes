@@ -6,7 +6,7 @@ import { crearLlamado } from "@/lib/llamados";
 // el mesero la dispara a mano en vez de que el cliente la pida desde su celular.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireApiUser("mesero", "admin");
+    const user = await requireApiUser("mesero", "admin", "caja");
     const { id } = await params;
     const llamado = await crearLlamado(user.restauranteId, id, "solicitar_cuenta");
     return NextResponse.json(llamado);

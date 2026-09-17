@@ -4,7 +4,7 @@ import { marcarPedidoEntregado } from "@/lib/pedidos";
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireApiUser("mesero", "admin");
+    const user = await requireApiUser("mesero", "admin", "caja");
     const { id } = await params;
     await marcarPedidoEntregado(user.restauranteId, id);
     return NextResponse.json({ ok: true });
