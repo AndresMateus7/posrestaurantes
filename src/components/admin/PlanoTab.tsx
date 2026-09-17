@@ -31,6 +31,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
   const [seleccionado, setSeleccionado] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const arrastre = useRef<{ id: string; offsetX: number; offsetY: number; movido: boolean } | null>(null);
+  const redimension = useRef<{ id: string; anchoInicial: number; altoInicial: number; startX: number; startY: number; rotacionRad: number } | null>(null);
 
   const cargar = useCallback(() => {
     fetch("/api/plano").then((r) => r.json()).then((data) => {
@@ -69,7 +70,36 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
 
+  function onResizePointerDown(e: React.PointerEvent<HTMLDivElement>, figura: ElementoPlano) {
+    e.stopPropagation();
+    redimension.current = {
+      id: figura.id,
+      anchoInicial: figura.ancho,
+      altoInicial: figura.alto,
+      startX: e.clientX,
+      startY: e.clientY,
+      rotacionRad: ((figura.rotacion ?? 0) * Math.PI) / 180,
+    };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
   function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (redimension.current) {
+      const { id, anchoInicial, altoInicial, startX, startY, rotacionRad } = redimension.current;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      // se rota el delta del mouse al marco local de la figura, para que
+      // arrastrar "hacia su propio ancho" funcione igual aunque este rotada.
+      const localDx = dx * Math.cos(-rotacionRad) - dy * Math.sin(-rotacionRad);
+      const localDy = dx * Math.sin(-rotacionRad) + dy * Math.cos(-rotacionRad);
+      setLayout((prev) =>
+        prev.map((f) =>
+          f.id === id ? { ...f, ancho: Math.max(20, Math.round(anchoInicial + localDx)), alto: Math.max(20, Math.round(altoInicial + localDy)) } : f
+        )
+      );
+      return;
+    }
+
     if (!arrastre.current) return;
     arrastre.current.movido = true;
     const canvasRect = canvasRef.current!.getBoundingClientRect();
@@ -88,6 +118,15 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
   }
 
   function onPointerUp() {
+    if (redimension.current) {
+      redimension.current = null;
+      setLayout((prev) => {
+        guardar(prev);
+        return prev;
+      });
+      return;
+    }
+
     if (!arrastre.current) return;
     const { id, movido } = arrastre.current;
     arrastre.current = null;
@@ -158,28 +197,38 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
           {layout.map((f) => {
             const mesa = f.tipo === "mesa" ? mesas.find((m) => m.elementoId === f.id) : undefined;
             const seleccionadoClase = seleccionado === f.id ? "shadow-[0_0_0_2px_#111827]" : "";
+            const manija = seleccionado === f.id && (
+              <div
+                onPointerDown={(e) => onResizePointerDown(e, f)}
+                className="absolute w-4 h-4 bg-white border-2 border-gray-800 rounded-full cursor-nwse-resize z-10"
+                style={{ right: -8, bottom: -8, touchAction: "none" }}
+              />
+            );
             if (f.tipo === "mesa") {
               const clase = ESTILO_MESA[mesa?.estado ?? "libre"];
               return (
-                <div
-                  key={f.id}
-                  onPointerDown={(e) => onPointerDown(e, f)}
-                  className={`absolute flex flex-col items-center justify-center border-2 cursor-move select-none rounded-lg ${clase} ${seleccionadoClase}`}
-                  style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, borderRadius: f.forma === "redonda" ? 9999 : 10, transform: `rotate(${f.rotacion ?? 0}deg)` }}
-                >
-                  <span className="font-bold text-lg leading-none">{mesa?.numero ?? "?"}</span>
-                  <span className="text-[10px] opacity-70">{mesa ? `${mesa.capacidad}p` : ""}</span>
+                <div key={f.id} className="absolute" style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, transform: `rotate(${f.rotacion ?? 0}deg)` }}>
+                  <div
+                    onPointerDown={(e) => onPointerDown(e, f)}
+                    className={`absolute inset-0 flex flex-col items-center justify-center border-2 cursor-move select-none rounded-lg ${clase} ${seleccionadoClase}`}
+                    style={{ borderRadius: f.forma === "redonda" ? 9999 : 10 }}
+                  >
+                    <span className="font-bold text-lg leading-none">{mesa?.numero ?? "?"}</span>
+                    <span className="text-[10px] opacity-70">{mesa ? `${mesa.capacidad}p` : ""}</span>
+                  </div>
+                  {manija}
                 </div>
               );
             }
             return (
-              <div
-                key={f.id}
-                onPointerDown={(e) => onPointerDown(e, f)}
-                className={`absolute flex items-center justify-center text-center text-xs font-medium border-2 border-dashed border-gray-400 bg-gray-50 text-gray-500 cursor-move select-none rounded-lg px-1 ${seleccionadoClase}`}
-                style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, transform: `rotate(${f.rotacion ?? 0}deg)` }}
-              >
-                {ICONO[f.tipo] ?? f.tipo}
+              <div key={f.id} className="absolute" style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, transform: `rotate(${f.rotacion ?? 0}deg)` }}>
+                <div
+                  onPointerDown={(e) => onPointerDown(e, f)}
+                  className={`absolute inset-0 flex items-center justify-center text-center text-xs font-medium border-2 border-dashed border-gray-400 bg-gray-50 text-gray-500 cursor-move select-none rounded-lg px-1 ${seleccionadoClase}`}
+                >
+                  {ICONO[f.tipo] ?? f.tipo}
+                </div>
+                {manija}
               </div>
             );
           })}
@@ -194,10 +243,14 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-400" />Reservada</span>
           </div>
 
-          {!figuraSeleccionada && <p className="text-sm opacity-40">Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para editarlo.</p>}
+          {!figuraSeleccionada && (
+            <p className="text-sm opacity-40">
+              Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para seleccionarlo. Cuando esté seleccionado, arrastra el círculo de su esquina para agrandarlo o achicarlo.
+            </p>
+          )}
 
           {figuraSeleccionada && figuraSeleccionada.tipo === "mesa" && mesaSeleccionada && (
-            <div key={figuraSeleccionada.id}>
+            <div key={`${figuraSeleccionada.id}-${figuraSeleccionada.ancho}-${figuraSeleccionada.alto}`}>
               <p className="text-xs font-semibold uppercase opacity-50 mb-2">Mesa seleccionada</p>
               <label className="block text-sm mb-2">
                 Número
@@ -269,7 +322,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
           )}
 
           {figuraSeleccionada && figuraSeleccionada.tipo !== "mesa" && (
-            <div key={figuraSeleccionada.id}>
+            <div key={`${figuraSeleccionada.id}-${figuraSeleccionada.ancho}-${figuraSeleccionada.alto}`}>
               <p className="text-xs font-semibold uppercase opacity-50 mb-3">{ICONO[figuraSeleccionada.tipo] ?? figuraSeleccionada.tipo}</p>
               <div className="grid grid-cols-2 gap-2 mb-3">
                 <label className="block text-sm">
