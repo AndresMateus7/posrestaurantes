@@ -107,13 +107,19 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
   }
 
   function cambiarForma(figuraId: string, forma: Forma) {
-    const nuevoLayout = layout.map((f) => (f.id === figuraId ? { ...f, forma, ...tamanoDefault("mesa", forma) } : f));
+    const nuevoLayout = layout.map((f) => (f.id === figuraId ? { ...f, forma } : f));
     setLayout(nuevoLayout);
     guardar(nuevoLayout);
   }
 
   function cambiarRotacion(figuraId: string, rotacion: number) {
     const nuevoLayout = layout.map((f) => (f.id === figuraId ? { ...f, rotacion } : f));
+    setLayout(nuevoLayout);
+    guardar(nuevoLayout);
+  }
+
+  function cambiarTamano(figuraId: string, campo: "ancho" | "alto", valor: number) {
+    const nuevoLayout = layout.map((f) => (f.id === figuraId ? { ...f, [campo]: Math.max(20, valor) } : f));
     setLayout(nuevoLayout);
     guardar(nuevoLayout);
   }
@@ -191,7 +197,7 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
           {!figuraSeleccionada && <p className="text-sm opacity-40">Arrastra un elemento para moverlo, o tócalo (sin arrastrar) para editarlo.</p>}
 
           {figuraSeleccionada && figuraSeleccionada.tipo === "mesa" && mesaSeleccionada && (
-            <div>
+            <div key={figuraSeleccionada.id}>
               <p className="text-xs font-semibold uppercase opacity-50 mb-2">Mesa seleccionada</p>
               <label className="block text-sm mb-2">
                 Número
@@ -222,6 +228,26 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
                   <option value="rectangular">Rectangular</option>
                 </select>
               </label>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <label className="block text-sm">
+                  Ancho
+                  <input
+                    type="number"
+                    defaultValue={figuraSeleccionada.ancho}
+                    onBlur={(e) => cambiarTamano(figuraSeleccionada.id, "ancho", Number(e.target.value))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1"
+                  />
+                </label>
+                <label className="block text-sm">
+                  Alto
+                  <input
+                    type="number"
+                    defaultValue={figuraSeleccionada.alto}
+                    onBlur={(e) => cambiarTamano(figuraSeleccionada.id, "alto", Number(e.target.value))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1"
+                  />
+                </label>
+              </div>
               <label className="block text-sm mb-3">
                 Rotación ({figuraSeleccionada.rotacion ?? 0}°)
                 <input
@@ -243,8 +269,28 @@ export function PlanoTab({ onCambio }: { onCambio: (msg: string) => void }) {
           )}
 
           {figuraSeleccionada && figuraSeleccionada.tipo !== "mesa" && (
-            <div>
+            <div key={figuraSeleccionada.id}>
               <p className="text-xs font-semibold uppercase opacity-50 mb-3">{ICONO[figuraSeleccionada.tipo] ?? figuraSeleccionada.tipo}</p>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <label className="block text-sm">
+                  Ancho
+                  <input
+                    type="number"
+                    defaultValue={figuraSeleccionada.ancho}
+                    onBlur={(e) => cambiarTamano(figuraSeleccionada.id, "ancho", Number(e.target.value))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1"
+                  />
+                </label>
+                <label className="block text-sm">
+                  Alto
+                  <input
+                    type="number"
+                    defaultValue={figuraSeleccionada.alto}
+                    onBlur={(e) => cambiarTamano(figuraSeleccionada.id, "alto", Number(e.target.value))}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-1.5 mt-1"
+                  />
+                </label>
+              </div>
               <label className="block text-sm mb-3">
                 Rotación ({figuraSeleccionada.rotacion ?? 0}°)
                 <input
