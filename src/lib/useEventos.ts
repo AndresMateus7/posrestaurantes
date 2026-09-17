@@ -12,7 +12,9 @@ type ManejadorEvento = (payload: unknown) => void;
  */
 export function useEventos(manejadores: Record<string, ManejadorEvento>) {
   const manejadoresRef = useRef(manejadores);
-  manejadoresRef.current = manejadores;
+  useEffect(() => {
+    manejadoresRef.current = manejadores;
+  });
 
   useEffect(() => {
     const eventSource = new EventSource("/api/eventos");
@@ -33,6 +35,5 @@ export function useEventos(manejadores: Record<string, ManejadorEvento>) {
       listeners.forEach(({ tipo, listener }) => eventSource.removeEventListener(tipo, listener));
       eventSource.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

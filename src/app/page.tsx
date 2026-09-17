@@ -5,7 +5,7 @@ const RUTA_POR_ROL: Record<string, string> = {
   admin: "/admin",
   mesero: "/mesero",
   cocina: "/cocina",
-  caja: "/mesero",
+  caja: "/caja",
 };
 
 export default async function Home() {

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { disponibleEfectivo } from "@/lib/disponibilidad";
 import { emitirEvento } from "@/lib/realtime";
+import { recalcularCuenta } from "@/lib/cuentas";
 
 export type ItemCarrito = {
   productoId: string;
@@ -39,8 +40,16 @@ export async function crearPedido(
       throw new PedidoError("mesa_cerrada", "Un mesero debe abrir la mesa antes de enviar el pedido");
     }
 
+    // "dividida" tambien cuenta como abierta para este fin: si llega un pedido
+    // nuevo tras dividir la cuenta, se suma a la misma cuenta (el cajero debe
+    // volver a dividirla) en vez de crear una segunda cuenta huerfana para la mesa.
+    let cuenta = await tx.cuenta.findFirst({ where: { mesaId, estado: { in: ["abierta", "dividida"] } } });
+    if (!cuenta) {
+      cuenta = await tx.cuenta.create({ data: { restauranteId, mesaId, estado: "abierta" } });
+    }
+
     const pedido = await tx.pedido.create({
-      data: { restauranteId, mesaId, origen, meseroId, estado: "recibido" },
+      data: { restauranteId, mesaId, cuentaId: cuenta.id, origen, meseroId, estado: "recibido" },
     });
 
     for (const item of items) {
@@ -98,6 +107,9 @@ export async function crearPedido(
 
     return pedido.id;
   });
+
+  const { cuentaId } = await prisma.pedido.findUniqueOrThrow({ where: { id: pedidoId }, select: { cuentaId: true } });
+  if (cuentaId) await recalcularCuenta(cuentaId);
 
   const pedidoCompleto = await prisma.pedido.findUniqueOrThrow({
     where: { id: pedidoId },

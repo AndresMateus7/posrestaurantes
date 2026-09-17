@@ -491,9 +491,14 @@ model Pago {
   referenciaTransaccion  String?    @map("referencia_transaccion")
   recibidoPor            String?    @map("recibido_por")
   usuario                Usuario?   @relation("PagoRecibidoPor", fields: [recibidoPor], references: [id], onDelete: SetNull)
+  // Turno de caja en el que se recibio -- necesario para el arqueo
+  // (monto_final_sistema suma los pagos en efectivo de ESTE turno).
+  turnoId                String?    @map("turno_id")
+  turno                  TurnoCaja? @relation(fields: [turnoId], references: [id], onDelete: SetNull)
   creadoEn               DateTime   @default(now()) @map("creado_en")
 
   @@index([cuentaId])
+  @@index([turnoId])
   @@map("pagos")
 }
 
@@ -516,6 +521,7 @@ model TurnoCaja {
   cerradoEn            DateTime? @map("cerrado_en")
 
   movimientos          MovimientoCaja[]
+  pagos                Pago[]
 
   @@index([restauranteId, estado])
   @@map("turnos_caja")
