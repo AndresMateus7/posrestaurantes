@@ -4,7 +4,7 @@ import { registrarFacturaProveedor, listarFacturasProveedor, resumenFacturasProv
 
 export async function GET(req: Request) {
   try {
-    const user = await requireApiUser("admin");
+    const user = await requireApiUser("admin", "caja");
     const { searchParams } = new URL(req.url);
     const desdeParam = searchParams.get("desde");
     const hastaParam = searchParams.get("hasta");
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const user = await requireApiUser("admin");
+    const user = await requireApiUser("admin", "caja");
     const { proveedor, numeroFactura, fecha, items } = (await req.json()) as {
       proveedor?: string;
       numeroFactura?: string;

@@ -21,6 +21,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       estacion: "bar" | "parrilla" | "cocina_general";
       tiempoPreparacionMin: number;
       disponible: boolean;
+      venderSinStock: boolean;
       imagenUrl: string | null;
     }>;
     const producto = await prisma.producto.update({ where: { id }, data: body });

@@ -259,6 +259,9 @@ model Producto {
   estacion           EstacionCocina @default(cocina_general)
   tiempoPreparacionMin Int    @default(15) @map("tiempo_preparacion_min")
   disponible         Boolean  @default(true)
+  // Si esta en true, disponibleEfectivo() ignora el stock de la receta -- el
+  // producto se puede seguir vendiendo aunque falte inventario. Ver src/lib/disponibilidad.ts.
+  venderSinStock     Boolean  @default(false) @map("vender_sin_stock")
   orden              Int      @default(0)
   creadoEn           DateTime @default(now()) @map("creado_en")
 

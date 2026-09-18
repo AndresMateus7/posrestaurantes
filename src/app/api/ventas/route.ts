@@ -4,7 +4,7 @@ import { listarHistorialVentas } from "@/lib/estadisticas";
 
 export async function GET(req: Request) {
   try {
-    const user = await requireApiUser("admin");
+    const user = await requireApiUser("admin", "caja");
     const { searchParams } = new URL(req.url);
     const ahora = new Date();
     const desdeParam = searchParams.get("desde");

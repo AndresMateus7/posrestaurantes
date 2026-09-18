@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
+import { HistorialVentasTab } from "@/components/admin/HistorialVentasTab";
+import { FacturasProveedorTab } from "@/components/admin/FacturasProveedorTab";
 
 type TurnoResumen = {
   id: string;
@@ -99,6 +101,8 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
 
   const [mostrarCerrarTurno, setMostrarCerrarTurno] = useState(false);
   const [montoFinalInput, setMontoFinalInput] = useState("");
+
+  const [vista, setVista] = useState<"caja" | "historial" | "facturas">("caja");
 
   function mostrarToast(msg: string) {
     setToast(msg);
@@ -383,7 +387,7 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
   return (
     <div className="min-h-screen pb-10" style={{ background: "var(--color-fondo)", fontFamily: "var(--fuente)" }}>
       <header className="sticky top-0 z-20 shadow-sm bg-white">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
           <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ background: "var(--color-secundario)" }}>
             {restauranteNombre.slice(0, 2).toUpperCase()}
           </div>
@@ -401,10 +405,32 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
               Cerrar turno
             </button>
           </div>
+          <nav className="flex gap-1 w-full">
+            {(
+              [
+                ["caja", "Caja"],
+                ["historial", "Historial de ventas"],
+                ["facturas", "Facturas de proveedor"],
+              ] as const
+            ).map(([id, nombre]) => (
+              <button
+                key={id}
+                onClick={() => setVista(id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium ${vista === id ? "text-white" : "opacity-60"}`}
+                style={vista === id ? { background: "var(--color-secundario)" } : undefined}
+              >
+                {nombre}
+              </button>
+            ))}
+          </nav>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-5 space-y-6">
+        {vista === "historial" && <HistorialVentasTab />}
+        {vista === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
+        {vista === "caja" && (
+        <>
         <section className="bg-white rounded-2xl shadow-sm p-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <span>
             Vendido en turno: <b>{formatoCOP(turno.totalPagos)}</b>
@@ -443,6 +469,8 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
             {cuentas.length === 0 && <p className="text-sm opacity-50 col-span-full">No hay cuentas abiertas ahora mismo.</p>}
           </div>
         </section>
+        </>
+        )}
       </main>
 
       {detalle && (
