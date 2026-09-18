@@ -2,23 +2,29 @@
 
 import { useState } from "react";
 import { TemaTab } from "./TemaTab";
+import { EstadisticasTab } from "./EstadisticasTab";
+import { HistorialVentasTab } from "./HistorialVentasTab";
 import { ProductosTab } from "./ProductosTab";
 import { InventarioTab } from "./InventarioTab";
+import { FacturasProveedorTab } from "./FacturasProveedorTab";
 import { MesasTab } from "./MesasTab";
 import { PlanoTab } from "./PlanoTab";
 import { UsuariosTab } from "./UsuariosTab";
 
 const TABS = [
+  { id: "estadisticas", nombre: "Estadísticas" },
+  { id: "historial", nombre: "Historial de ventas" },
   { id: "tema", nombre: "Tema" },
   { id: "productos", nombre: "Productos y receta" },
   { id: "inventario", nombre: "Inventario" },
+  { id: "facturas", nombre: "Facturas de proveedor" },
   { id: "mesas", nombre: "Mesas y QR" },
   { id: "plano", nombre: "Plano del local" },
   { id: "usuarios", nombre: "Usuarios" },
 ] as const;
 
 export function AdminPanel({ restauranteNombre }: { restauranteNombre: string }) {
-  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("tema");
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("estadisticas");
   const [toast, setToast] = useState<string | null>(null);
 
   function mostrarToast(msg: string) {
@@ -47,9 +53,12 @@ export function AdminPanel({ restauranteNombre }: { restauranteNombre: string })
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
+        {tab === "estadisticas" && <EstadisticasTab />}
+        {tab === "historial" && <HistorialVentasTab />}
         {tab === "tema" && <TemaTab onGuardado={mostrarToast} />}
         {tab === "productos" && <ProductosTab onCambio={mostrarToast} />}
         {tab === "inventario" && <InventarioTab onCambio={mostrarToast} />}
+        {tab === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
         {tab === "mesas" && <MesasTab onCambio={mostrarToast} />}
         {tab === "plano" && <PlanoTab onCambio={mostrarToast} />}
         {tab === "usuarios" && <UsuariosTab onCambio={mostrarToast} />}

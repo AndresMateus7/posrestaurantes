@@ -12,6 +12,9 @@ type TurnoResumen = {
   movimientos: { id: string; tipo: string; monto: number; descripcion: string | null; creadoEn: string }[];
   totalPagos: number;
   pagosPorMetodo: Record<string, number>;
+  cantidadVentas: number;
+  cantidadPagos: number;
+  ticketPromedio: number;
   montoSistemaActual: number | null;
 };
 
@@ -406,6 +409,11 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
           <span>
             Vendido en turno: <b>{formatoCOP(turno.totalPagos)}</b>
           </span>
+          <span className="opacity-70">
+            Ventas: <b>{turno.cantidadVentas}</b>
+            {turno.cantidadPagos !== turno.cantidadVentas && ` (${turno.cantidadPagos} pagos)`}
+          </span>
+          <span className="opacity-70">Ticket promedio: {formatoCOP(turno.ticketPromedio)}</span>
           {Object.entries(turno.pagosPorMetodo).map(([metodo, monto]) => (
             <span key={metodo} className="opacity-70">
               {ETIQUETA_METODO[metodo] ?? metodo}: {formatoCOP(monto)}
@@ -713,6 +721,21 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
               <div className="flex justify-between">
                 <span className="opacity-60">Base inicial</span>
                 <span>{formatoCOP(turno.montoInicial)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-60">Ventas del turno</span>
+                <span>
+                  {turno.cantidadVentas} {turno.cantidadVentas === 1 ? "venta" : "ventas"}
+                  {turno.cantidadPagos !== turno.cantidadVentas && ` · ${turno.cantidadPagos} pagos`}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-60">Ticket promedio</span>
+                <span>{formatoCOP(turno.ticketPromedio)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="opacity-60">Vendido en turno</span>
+                <span>{formatoCOP(turno.totalPagos)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="opacity-60">Sistema espera en caja</span>

@@ -127,6 +127,7 @@ model Restaurante {
   cuentas       Cuenta[]
   turnosCaja    TurnoCaja[]
   llamados      LlamadoMesa[]
+  facturasProveedor FacturaProveedor[]
 
   @@map("restaurantes")
 }
@@ -164,6 +165,7 @@ model Usuario {
   turnos               TurnoCaja[]
   llamadosAtendidos    LlamadoMesa[]       @relation("LlamadoAtendidoPor")
   movimientosInventario MovimientoInventario[]
+  facturasProveedorRegistradas FacturaProveedor[]
 
   @@index([restauranteId])
   @@map("usuarios")
@@ -292,11 +294,18 @@ model Ingrediente {
   unidadMedida  String   @default("g") @map("unidad_medida")
   stockActual   Decimal  @default(0) @db.Decimal(10, 2) @map("stock_actual")
   stockMinimo   Decimal  @default(0) @db.Decimal(10, 2) @map("stock_minimo")
+  // Costo promedio ponderado (CPP) por unidad de medida -- se recalcula en cada
+  // factura de proveedor registrada, ver src/lib/facturas-proveedor.ts.
+  costoPromedio Int      @default(0) @map("costo_promedio")
+  // Ubicacion fisica en la bodega/cocina -- opcional, el restaurante decide si la usa.
+  ubicacion     String?
+  creadoEn      DateTime @default(now()) @map("creado_en")
   actualizadoEn DateTime @updatedAt @map("actualizado_en")
 
   recetas       ProductoIngrediente[]
   adicionales   Adicional[]
   movimientos   MovimientoInventario[]
+  comprasFactura FacturaProveedorItem[]
 
   @@unique([restauranteId, nombre])
   @@map("ingredientes")
@@ -328,6 +337,41 @@ model MovimientoInventario {
 
   @@index([ingredienteId, creadoEn])
   @@map("movimientos_inventario")
+}
+
+// Factura de compra a proveedor: registra el valor real pagado por insumos
+// (no una formula automatica) y actualiza stock + costo promedio ponderado
+// de cada ingrediente en la misma transaccion -- ver src/lib/facturas-proveedor.ts.
+model FacturaProveedor {
+  id              String   @id @default(uuid())
+  restauranteId   String   @map("restaurante_id")
+  restaurante     Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  proveedor       String
+  numeroFactura   String?  @map("numero_factura")
+  fecha           DateTime @default(now())
+  total           Int      @default(0)
+  registradoPorId String?  @map("registrado_por_id")
+  registradoPor   Usuario? @relation(fields: [registradoPorId], references: [id], onDelete: SetNull)
+  creadoEn        DateTime @default(now()) @map("creado_en")
+
+  items           FacturaProveedorItem[]
+
+  @@index([restauranteId, fecha])
+  @@map("facturas_proveedor")
+}
+
+model FacturaProveedorItem {
+  id            String   @id @default(uuid())
+  facturaId     String   @map("factura_id")
+  factura       FacturaProveedor @relation(fields: [facturaId], references: [id], onDelete: Cascade)
+  ingredienteId String   @map("ingrediente_id")
+  ingrediente   Ingrediente @relation(fields: [ingredienteId], references: [id], onDelete: Restrict)
+  cantidad      Decimal  @db.Decimal(10, 2)
+  costoUnitario Int      @map("costo_unitario")
+  subtotal      Int
+
+  @@index([facturaId])
+  @@map("factura_proveedor_items")
 }
 
 // =====================================================================

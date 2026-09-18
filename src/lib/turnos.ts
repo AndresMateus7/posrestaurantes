@@ -78,11 +78,20 @@ export async function resumenTurno(restauranteId: string, turnoId: string) {
     acc[p.metodo] = (acc[p.metodo] ?? 0) + p.monto;
     return acc;
   }, {});
+  const totalPagos = turno.pagos.reduce((a, p) => a + p.monto, 0);
+  // Una "venta" = una cuenta distinta cobrada en el turno; "pagos" cuenta
+  // transacciones (una cuenta dividida en varias sub-cuentas genera varios
+  // pagos para una sola venta), util para cuadrar recibos al cerrar caja.
+  const cantidadVentas = new Set(turno.pagos.map((p) => p.cuentaId)).size;
+  const cantidadPagos = turno.pagos.length;
 
   return {
     ...turno,
-    totalPagos: turno.pagos.reduce((a, p) => a + p.monto, 0),
+    totalPagos,
     pagosPorMetodo: porMetodo,
+    cantidadVentas,
+    cantidadPagos,
+    ticketPromedio: cantidadVentas > 0 ? Math.round(totalPagos / cantidadVentas) : 0,
     montoSistemaActual: turno.estado === "abierto" ? await calcularMontoSistema(turnoId) : turno.montoFinalSistema,
   };
 }
