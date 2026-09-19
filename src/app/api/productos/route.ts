@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
 import { disponibleEfectivo } from "@/lib/disponibilidad";
+import { emitirEvento } from "@/lib/realtime";
 
 export async function GET(req: Request) {
   try {
@@ -53,6 +54,7 @@ export async function POST(req: Request) {
         tiempoPreparacionMin: body.tiempoPreparacionMin ?? 15,
       },
     });
+    emitirEvento(user.restauranteId, "producto-actualizado", { productoId: producto.id });
     return NextResponse.json(producto, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error);

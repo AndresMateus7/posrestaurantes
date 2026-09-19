@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
+import { crearIngrediente } from "@/lib/inventario";
 
 export async function GET() {
   try {
@@ -30,26 +31,25 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const user = await requireApiUser("admin");
-    const { nombre, unidadMedida, stockActual, stockMinimo, ubicacion } = (await req.json()) as {
+    const { nombre, unidadMedida, stockActual, stockMinimo, ubicacion, venderEnMenu } = (await req.json()) as {
       nombre?: string;
       unidadMedida?: string;
       stockActual?: number;
       stockMinimo?: number;
       ubicacion?: string;
+      venderEnMenu?: { nombre?: string; categoriaId: string; precio: number; estacion?: "bar" | "parrilla" | "cocina_general"; cantidadPorVenta?: number };
     };
     if (!nombre) return NextResponse.json({ error: "nombre es requerido" }, { status: 400 });
 
-    const ingrediente = await prisma.ingrediente.create({
-      data: {
-        restauranteId: user.restauranteId,
-        nombre,
-        unidadMedida: unidadMedida ?? "g",
-        stockActual: stockActual ?? 0,
-        stockMinimo: stockMinimo ?? 0,
-        ubicacion: ubicacion || null,
-      },
+    const { ingrediente, producto } = await crearIngrediente(user.restauranteId, user.usuarioId, {
+      nombre,
+      unidadMedida,
+      stockActual,
+      stockMinimo,
+      ubicacion,
+      venderEnMenu,
     });
-    return NextResponse.json(ingrediente, { status: 201 });
+    return NextResponse.json({ ...ingrediente, producto }, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error);
   }

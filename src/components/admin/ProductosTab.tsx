@@ -36,6 +36,7 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
   const [nuevoPrecio, setNuevoPrecio] = useState("");
   const [nuevoDescripcion, setNuevoDescripcion] = useState("");
   const [nuevaEstacion, setNuevaEstacion] = useState<"bar" | "parrilla" | "cocina_general">("cocina_general");
+  const [nuevaReceta, setNuevaReceta] = useState<{ ingredienteId: string; cantidad: string }[]>([]);
 
   const cargar = useCallback(() => fetch("/api/productos").then((r) => r.json()).then(setProductos), []);
   useEffect(() => {
@@ -53,6 +54,7 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
     setNuevoPrecio("");
     setNuevoDescripcion("");
     setNuevaEstacion("cocina_general");
+    setNuevaReceta([]);
   }
 
   async function crearProducto() {
@@ -77,10 +79,24 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
       onCambio(data.error ?? "No se pudo crear el producto");
       return;
     }
+
+    const receta = nuevaReceta
+      .filter((l) => l.ingredienteId && Number(l.cantidad) > 0)
+      .map((l) => ({ ingredienteId: l.ingredienteId, cantidadUsada: Number(l.cantidad) }));
+    let recetaGuardada = true;
+    if (receta.length > 0) {
+      const resReceta = await fetch(`/api/productos/${data.id}/receta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receta }),
+      });
+      recetaGuardada = resReceta.ok;
+    }
+
     setMostrarNuevo(false);
     resetNuevo();
     cargar();
-    onCambio(`${data.nombre} agregado al menú 🍽️`);
+    onCambio(recetaGuardada ? `${data.nombre} agregado al menú 🍽️` : `${data.nombre} creado, pero falló la receta — agrégala expandiéndolo en la lista`);
   }
 
   async function toggleVenderSinStock(p: Producto) {
@@ -150,14 +166,12 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm opacity-60">
-          La disponibilidad &quot;efectiva&quot; cruza el toggle manual con el stock de cada ingrediente de la receta. Ajusta stock en la pestaña Inventario y el efecto se ve aquí y en el menú del cliente al instante.
-        </p>
-        <button onClick={() => setMostrarNuevo(true)} className="shrink-0 text-sm font-semibold text-white rounded-full px-4 py-2 bg-gray-900">
-          + Nuevo plato/bebida
-        </button>
-      </div>
+      <button onClick={() => setMostrarNuevo(true)} className="w-full sm:w-auto text-sm font-semibold text-white rounded-full px-5 py-2.5 bg-gray-900">
+        + Nuevo plato/bebida
+      </button>
+      <p className="text-sm opacity-60">
+        La disponibilidad &quot;efectiva&quot; cruza el toggle manual con el stock de cada ingrediente de la receta. Ajusta stock en la pestaña Inventario y el efecto se ve aquí y en el menú del cliente al instante.
+      </p>
       {productos.map((p) => {
         const abierto = expandido === p.id;
         const ingredientesDisponibles = ingredientes.filter((i) => !p.ingredientes.some((r) => r.ingredienteId === i.id));
@@ -267,7 +281,7 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
       {mostrarNuevo && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMostrarNuevo(false)} />
-          <div className="absolute inset-x-0 bottom-0 sm:m-auto sm:relative sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white p-5">
+          <div className="absolute inset-x-0 bottom-0 sm:m-auto sm:relative sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-5">
             <h3 className="text-lg font-semibold">Nuevo plato o bebida</h3>
 
             <label className="block text-xs font-medium opacity-70 mt-4 mb-1">Nombre *</label>
@@ -298,7 +312,49 @@ export function ProductosTab({ onCambio }: { onCambio: (msg: string) => void }) 
             <label className="block text-xs font-medium opacity-70 mt-3 mb-1">Descripción (opcional)</label>
             <input value={nuevoDescripcion} onChange={(e) => setNuevoDescripcion(e.target.value)} className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm" />
 
-            <p className="text-xs opacity-50 mt-3">Después de crearlo puedes agregarle foto, receta y adicionales expandiéndolo en la lista.</p>
+            <p className="text-xs font-semibold uppercase opacity-60 mt-5 mb-1">Inventario que descuenta (opcional)</p>
+            <p className="text-xs opacity-50 mb-2">Elige qué ingredientes se gastan cada vez que se vende este plato y cuánto de cada uno. Si no agregas ninguno, no descuenta inventario.</p>
+            <div className="space-y-2">
+              {nuevaReceta.map((linea, idx) => {
+                const ing = ingredientes.find((i) => i.id === linea.ingredienteId);
+                const usados = nuevaReceta.filter((_, i) => i !== idx).map((l) => l.ingredienteId);
+                return (
+                  <div key={idx} className="flex items-center gap-2">
+                    <select
+                      value={linea.ingredienteId}
+                      onChange={(e) => setNuevaReceta((prev) => prev.map((l, i) => (i === idx ? { ...l, ingredienteId: e.target.value } : l)))}
+                      className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                    >
+                      <option value="">Seleccionar ingrediente…</option>
+                      {ingredientes
+                        .filter((i) => !usados.includes(i.id))
+                        .map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {i.nombre}
+                          </option>
+                        ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="Cantidad"
+                      value={linea.cantidad}
+                      onChange={(e) => setNuevaReceta((prev) => prev.map((l, i) => (i === idx ? { ...l, cantidad: e.target.value } : l)))}
+                      className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right"
+                    />
+                    <span className="opacity-50 text-xs w-10">{ing?.unidadMedida ?? ""}</span>
+                    <button onClick={() => setNuevaReceta((prev) => prev.filter((_, i) => i !== idx))} className="text-red-500 px-1">
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={() => setNuevaReceta((prev) => [...prev, { ingredienteId: "", cantidad: "" }])} className="text-xs border border-gray-300 rounded-full px-3 py-1.5 mt-2">
+              + Agregar ingrediente
+            </button>
+            <p className="text-xs opacity-50 mt-2">¿No está el ingrediente? Agrégalo primero en la pestaña Inventario. La foto y los adicionales se agregan después, expandiendo el plato en la lista.</p>
 
             <button onClick={crearProducto} className="w-full text-white rounded-xl py-3 font-semibold mt-4 bg-gray-900">
               Crear producto

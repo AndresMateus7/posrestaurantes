@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
+import { emitirEvento } from "@/lib/realtime";
 
 async function verificarPropiedad(restauranteId: string, id: string) {
   const producto = await prisma.producto.findUnique({ where: { id } });
@@ -25,6 +26,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       imagenUrl: string | null;
     }>;
     const producto = await prisma.producto.update({ where: { id }, data: body });
+    emitirEvento(user.restauranteId, "producto-actualizado", { productoId: id });
     return NextResponse.json(producto);
   } catch (error) {
     return apiErrorResponse(error);
