@@ -34,7 +34,22 @@ const estaAbierta = (m: Mesa) => m.estado !== "libre" && m.estado !== "reservada
 // Un mesero no ve el detalle de las mesas que atiende otro mesero; caja y admin ven todo.
 const atiendeOtro = (m: Mesa, usuarioId: string, rol: string) => rol === "mesero" && estaAbierta(m) && m.meseroId !== null && m.meseroId !== usuarioId;
 
-export function MeseroPanel({ restauranteNombre, rotaQr, usuarioId, rol }: { restauranteNombre: string; rotaQr: boolean; usuarioId: string; rol: string }) {
+// `embebido`: el mismo panel dentro de Caja/Admin (sin pagina propia ni cabecera),
+// para que caja pueda hacer todo lo del mesero -- abrir mesas, tomar pedidos,
+// atender llamados -- y ver quien atiende cada mesa sin salir de su pantalla.
+export function MeseroPanel({
+  restauranteNombre = "",
+  rotaQr,
+  usuarioId,
+  rol,
+  embebido = false,
+}: {
+  restauranteNombre?: string;
+  rotaQr?: boolean;
+  usuarioId: string;
+  rol: string;
+  embebido?: boolean;
+}) {
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [layout, setLayout] = useState<ElementoPlano[]>([]);
   const [llamados, setLlamados] = useState<Llamado[]>([]);
@@ -179,24 +194,30 @@ export function MeseroPanel({ restauranteNombre, rotaQr, usuarioId, rol }: { res
     return mesa.mesero?.nombre.split(" ")[0] ?? "Otro";
   }
 
-  return (
-    <div className="min-h-screen pb-10" style={{ background: "var(--color-fondo)", fontFamily: "var(--fuente)" }}>
-      <header className="sticky top-0 z-20 shadow-sm bg-white">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ background: "var(--color-secundario)" }}>
-            {restauranteNombre.slice(0, 2).toUpperCase()}
-          </div>
-          <div>
-            <h1 className="font-semibold leading-tight">Panel de Mesero</h1>
-            <p className="text-xs opacity-60">{restauranteNombre}</p>
-          </div>
-          <span className="ml-auto text-xs bg-black/5 rounded-full px-3 py-1">
-            rota_qr: <b>{String(rotaQr)}</b>
-          </span>
-        </div>
-      </header>
+  const Contenedor = embebido ? "div" : "main";
 
-      <main className="max-w-5xl mx-auto px-4 py-5 space-y-6">
+  return (
+    <div className={embebido ? undefined : "min-h-screen pb-10"} style={embebido ? undefined : { background: "var(--color-fondo)", fontFamily: "var(--fuente)" }}>
+      {!embebido && (
+        <header className="sticky top-0 z-20 shadow-sm bg-white">
+          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full grid place-items-center text-white font-bold shrink-0" style={{ background: "var(--color-secundario)" }}>
+              {restauranteNombre.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <h1 className="font-semibold leading-tight">Panel de Mesero</h1>
+              <p className="text-xs opacity-60">{restauranteNombre}</p>
+            </div>
+            {rotaQr !== undefined && (
+              <span className="ml-auto text-xs bg-black/5 rounded-full px-3 py-1">
+                rota_qr: <b>{String(rotaQr)}</b>
+              </span>
+            )}
+          </div>
+        </header>
+      )}
+
+      <Contenedor className={embebido ? "space-y-6" : "max-w-5xl mx-auto px-4 py-5 space-y-6"}>
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Llamados pendientes</h2>
           <div className="space-y-2">
@@ -275,7 +296,7 @@ export function MeseroPanel({ restauranteNombre, rotaQr, usuarioId, rol }: { res
             </div>
           </div>
         </section>
-      </main>
+      </Contenedor>
 
       {mesaAbierta && (
         <div className="fixed inset-0 z-30">

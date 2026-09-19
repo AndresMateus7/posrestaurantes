@@ -13,7 +13,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const cuenta = await prisma.cuenta.findUnique({
       where: { id },
       include: {
-        mesa: { select: { id: true, numero: true } },
+        mesa: { select: { id: true, numero: true, mesero: { select: { nombre: true } } } },
         pedidos: {
           include: {
             items: { include: { producto: { select: { nombre: true } }, adicionales: { include: { adicional: true } } } },
@@ -32,6 +32,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       id: cuenta.id,
       mesaId: cuenta.mesa.id,
       mesaNumero: cuenta.mesa.numero,
+      meseroNombre: cuenta.mesa.mesero?.nombre ?? null,
       estado: cuenta.estado,
       subtotal: cuenta.subtotal,
       propina: cuenta.propina,

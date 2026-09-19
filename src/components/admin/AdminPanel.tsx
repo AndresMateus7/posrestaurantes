@@ -10,9 +10,11 @@ import { FacturasProveedorTab } from "./FacturasProveedorTab";
 import { MesasTab } from "./MesasTab";
 import { PlanoTab } from "./PlanoTab";
 import { UsuariosTab } from "./UsuariosTab";
+import { MeseroPanel } from "@/components/mesero/MeseroPanel";
 
 const TABS = [
   { id: "estadisticas", nombre: "Estadísticas" },
+  { id: "salon", nombre: "Salón en vivo" },
   { id: "historial", nombre: "Historial de ventas" },
   { id: "tema", nombre: "Tema" },
   { id: "productos", nombre: "Productos y receta" },
@@ -23,7 +25,7 @@ const TABS = [
   { id: "usuarios", nombre: "Usuarios" },
 ] as const;
 
-export function AdminPanel({ restauranteNombre }: { restauranteNombre: string }) {
+export function AdminPanel({ restauranteNombre, usuarioId }: { restauranteNombre: string; usuarioId: string }) {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("estadisticas");
   const [toast, setToast] = useState<string | null>(null);
 
@@ -54,6 +56,7 @@ export function AdminPanel({ restauranteNombre }: { restauranteNombre: string })
 
       <main className="max-w-6xl mx-auto px-4 py-6">
         {tab === "estadisticas" && <EstadisticasTab />}
+        {tab === "salon" && <MeseroPanel embebido usuarioId={usuarioId} rol="admin" />}
         {tab === "historial" && <HistorialVentasTab />}
         {tab === "tema" && <TemaTab onGuardado={mostrarToast} />}
         {tab === "productos" && <ProductosTab onCambio={mostrarToast} />}

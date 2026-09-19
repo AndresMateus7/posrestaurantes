@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
 import { HistorialVentasTab } from "@/components/admin/HistorialVentasTab";
 import { FacturasProveedorTab } from "@/components/admin/FacturasProveedorTab";
+import { MeseroPanel } from "@/components/mesero/MeseroPanel";
 
 type TurnoResumen = {
   id: string;
@@ -24,6 +25,7 @@ type CuentaResumen = {
   id: string;
   mesaId: string;
   mesaNumero: string;
+  meseroNombre: string | null;
   estado: string;
   subtotal: number;
   propina: number;
@@ -54,6 +56,7 @@ type CuentaDetalle = {
   id: string;
   mesaId: string;
   mesaNumero: string;
+  meseroNombre: string | null;
   estado: string;
   subtotal: number;
   propina: number;
@@ -74,7 +77,7 @@ const ETIQUETA_METODO: Record<string, string> = {
 };
 const formatoCOP = (v: number) => "$" + Math.round(v).toLocaleString("es-CO");
 
-export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) {
+export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNombre: string; usuarioId: string; rol: string }) {
   const [turno, setTurno] = useState<TurnoResumen | null | undefined>(undefined);
   const [montoInicialInput, setMontoInicialInput] = useState("");
   const [cuentas, setCuentas] = useState<CuentaResumen[]>([]);
@@ -102,7 +105,8 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
   const [mostrarCerrarTurno, setMostrarCerrarTurno] = useState(false);
   const [montoFinalInput, setMontoFinalInput] = useState("");
 
-  const [vista, setVista] = useState<"caja" | "historial" | "facturas">("caja");
+  const [vista, setVista] = useState<"caja" | "salon" | "historial" | "facturas">("caja");
+  const [llamadosPendientes, setLlamadosPendientes] = useState(0);
 
   function mostrarToast(msg: string) {
     setToast(msg);
@@ -112,10 +116,18 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
   const cargarTurno = useCallback(() => fetch("/api/turnos").then((r) => r.json()).then(setTurno), []);
   const cargarCuentas = useCallback(() => fetch("/api/cuentas").then((r) => r.json()).then(setCuentas), []);
   const cargarDetalle = useCallback((id: string) => fetch(`/api/cuentas/${id}`).then((r) => r.json()).then(setDetalle), []);
+  const cargarLlamados = useCallback(
+    () =>
+      fetch("/api/llamados")
+        .then((r) => r.json())
+        .then((l: unknown[]) => setLlamadosPendientes(l.length)),
+    []
+  );
 
   useEffect(() => {
     cargarTurno();
-  }, [cargarTurno]);
+    cargarLlamados();
+  }, [cargarTurno, cargarLlamados]);
 
   useEffect(() => {
     if (turno) cargarCuentas();
@@ -146,6 +158,16 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
       }
     },
     "pedido-creado": () => cargarCuentas(),
+    // Si no hay mesero, caja atiende los llamados: contador en la pestaña "Mesas y pedidos"
+    // y aviso mientras esta en otra vista (en esa pestaña el propio panel avisa y suena).
+    "llamado-creado": (payload) => {
+      cargarLlamados();
+      if (vista === "salon") return;
+      const l = payload as { tipo: string; mesaNumero: string };
+      mostrarToast(`${l.tipo === "llamar_mesero" ? "🛎️ Llaman al mesero" : "🧾 Piden la cuenta"} — Mesa ${l.mesaNumero}`);
+    },
+    "llamado-atendido": () => cargarLlamados(),
+    "mesa-actualizada": () => cargarCuentas(),
   });
 
   async function confirmarAbrirTurno() {
@@ -355,33 +377,6 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
     return <div className="min-h-screen grid place-items-center text-sm opacity-50">Cargando...</div>;
   }
 
-  if (turno === null) {
-    return (
-      <div className="min-h-screen grid place-items-center px-4" style={{ background: "var(--color-fondo)", fontFamily: "var(--fuente)" }}>
-        <div className="bg-white rounded-2xl shadow-sm p-6 w-full max-w-sm">
-          <h1 className="text-lg font-semibold">Abrir turno de caja</h1>
-          <p className="text-sm opacity-60 mt-1">{restauranteNombre}</p>
-          <label className="block text-xs font-medium opacity-70 mt-4 mb-1">Monto inicial en caja</label>
-          <input
-            type="number"
-            value={montoInicialInput}
-            onChange={(e) => setMontoInicialInput(e.target.value)}
-            placeholder="0"
-            className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm"
-          />
-          <button onClick={confirmarAbrirTurno} className="w-full text-white rounded-xl py-3 font-semibold mt-4" style={{ background: "var(--color-primario)" }}>
-            Abrir turno
-          </button>
-        </div>
-        {toast && (
-          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full text-white text-sm shadow-lg" style={{ background: "var(--color-secundario)" }}>
-            {toast}
-          </div>
-        )}
-      </div>
-    );
-  }
-
   const saldoPendiente = detalle ? detalle.total - detalle.totalPagado : 0;
 
   return (
@@ -393,22 +388,23 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
           </div>
           <div>
             <h1 className="font-semibold leading-tight">Caja</h1>
-            <p className="text-xs opacity-60">
-              Turno de {turno.usuario.nombre} · Base {formatoCOP(turno.montoInicial)}
-            </p>
+            <p className="text-xs opacity-60">{turno ? `Turno de ${turno.usuario.nombre} · Base ${formatoCOP(turno.montoInicial)}` : "Sin turno abierto"}</p>
           </div>
-          <div className="ml-auto flex gap-2">
-            <button onClick={() => setMostrarMovimiento(true)} className="text-xs font-semibold rounded-full px-3 py-2 border border-gray-300">
-              Movimiento
-            </button>
-            <button onClick={() => setMostrarCerrarTurno(true)} className="text-xs font-semibold rounded-full px-3 py-2 text-white" style={{ background: "var(--color-primario)" }}>
-              Cerrar turno
-            </button>
-          </div>
-          <nav className="flex gap-1 w-full">
+          {turno && (
+            <div className="ml-auto flex gap-2">
+              <button onClick={() => setMostrarMovimiento(true)} className="text-xs font-semibold rounded-full px-3 py-2 border border-gray-300">
+                Movimiento
+              </button>
+              <button onClick={() => setMostrarCerrarTurno(true)} className="text-xs font-semibold rounded-full px-3 py-2 text-white" style={{ background: "var(--color-primario)" }}>
+                Cerrar turno
+              </button>
+            </div>
+          )}
+          <nav className="flex gap-1 w-full overflow-x-auto">
             {(
               [
                 ["caja", "Caja"],
+                ["salon", "Mesas y pedidos"],
                 ["historial", "Historial de ventas"],
                 ["facturas", "Facturas de proveedor"],
               ] as const
@@ -416,10 +412,13 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
               <button
                 key={id}
                 onClick={() => setVista(id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium ${vista === id ? "text-white" : "opacity-60"}`}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium ${vista === id ? "text-white" : "opacity-60"}`}
                 style={vista === id ? { background: "var(--color-secundario)" } : undefined}
               >
                 {nombre}
+                {id === "salon" && llamadosPendientes > 0 && (
+                  <span className="ml-1.5 bg-red-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{llamadosPendientes}</span>
+                )}
               </button>
             ))}
           </nav>
@@ -427,9 +426,28 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-5 space-y-6">
+        {vista === "salon" && <MeseroPanel embebido usuarioId={usuarioId} rol={rol} />}
         {vista === "historial" && <HistorialVentasTab />}
         {vista === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
-        {vista === "caja" && (
+        {vista === "caja" && !turno && (
+          <div className="bg-white rounded-2xl shadow-sm p-6 w-full max-w-sm mx-auto">
+            <h2 className="text-lg font-semibold">Abrir turno de caja</h2>
+            <p className="text-sm opacity-60 mt-1">{restauranteNombre}</p>
+            <p className="text-xs opacity-50 mt-1">Para cobrar necesitas un turno abierto. Mesas, pedidos, historial y facturas los puedes usar sin turno.</p>
+            <label className="block text-xs font-medium opacity-70 mt-4 mb-1">Monto inicial en caja</label>
+            <input
+              type="number"
+              value={montoInicialInput}
+              onChange={(e) => setMontoInicialInput(e.target.value)}
+              placeholder="0"
+              className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm"
+            />
+            <button onClick={confirmarAbrirTurno} className="w-full text-white rounded-xl py-3 font-semibold mt-4" style={{ background: "var(--color-primario)" }}>
+              Abrir turno
+            </button>
+          </div>
+        )}
+        {vista === "caja" && turno && (
         <>
         <section className="bg-white rounded-2xl shadow-sm p-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <span>
@@ -463,6 +481,7 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
                   <p className="text-2xl font-bold">Mesa {c.mesaNumero}</p>
                   <p className="text-sm font-semibold mt-1">{formatoCOP(c.total)}</p>
                   <p className="text-[11px] opacity-70 mt-0.5">{pendiente <= 0 ? "Pagado" : `Faltan ${formatoCOP(pendiente)}`}</p>
+                  <p className="text-[11px] font-medium mt-1 truncate">🧑‍🍳 {c.meseroNombre ?? "Sin mesero"}</p>
                 </button>
               );
             })}
@@ -478,6 +497,7 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
           <div className="absolute inset-0 bg-black/50" onClick={cerrarDetalle} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-5">
             <h3 className="text-lg font-semibold">Mesa {detalle.mesaNumero}</h3>
+            <p className="text-xs opacity-60">Atiende: {detalle.meseroNombre ?? "sin mesero"}</p>
 
             <div className="space-y-2 mt-3">
               {detalle.items.map((it) => (
@@ -740,7 +760,7 @@ export function CajaPanel({ restauranteNombre }: { restauranteNombre: string }) 
         </div>
       )}
 
-      {mostrarCerrarTurno && (
+      {mostrarCerrarTurno && turno && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMostrarCerrarTurno(false)} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-sm rounded-t-3xl sm:rounded-3xl bg-white p-5">

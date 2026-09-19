@@ -12,7 +12,7 @@ export async function GET() {
     const cuentas = await prisma.cuenta.findMany({
       where: { restauranteId: user.restauranteId, estado: { in: ["abierta", "dividida"] } },
       include: {
-        mesa: { select: { id: true, numero: true } },
+        mesa: { select: { id: true, numero: true, mesero: { select: { nombre: true } } } },
         pagos: { select: { monto: true } },
       },
       orderBy: { creadoEn: "asc" },
@@ -23,6 +23,7 @@ export async function GET() {
         id: c.id,
         mesaId: c.mesa.id,
         mesaNumero: c.mesa.numero,
+        meseroNombre: c.mesa.mesero?.nombre ?? null,
         estado: c.estado,
         subtotal: c.subtotal,
         propina: c.propina,

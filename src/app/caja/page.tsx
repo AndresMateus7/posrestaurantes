@@ -5,5 +5,5 @@ import { CajaPanel } from "@/components/caja/CajaPanel";
 export default async function CajaPage() {
   const user = await requireRol("caja", "admin");
   const restaurante = await prisma.restaurante.findUniqueOrThrow({ where: { id: user.restauranteId } });
-  return <CajaPanel restauranteNombre={restaurante.nombre} />;
+  return <CajaPanel restauranteNombre={restaurante.nombre} usuarioId={user.usuarioId} rol={user.rol} />;
 }
