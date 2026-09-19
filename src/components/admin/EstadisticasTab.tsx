@@ -1,16 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ICONO_SERVICIO, NOMBRE_SERVICIO } from "@/lib/servicio";
 
 type Plato = { productoId: string; nombre: string; categoria: string; cantidadVendida: number; ingresos: number };
 type Estadisticas = {
   cantidadVentas: number;
   totalVendido: number;
   totalPropinas: number;
+  totalDomicilios: number;
   totalCobrado: number;
   ticketPromedio: number;
   ventasPorDia: { fecha: string; total: number }[];
   ventasPorMetodo: Record<string, number>;
+  ventasPorTipo: { tipo: "mesa" | "llevar" | "domicilio"; cantidad: number; total: number }[];
   masVendidos: Plato[];
   menosVendidos: Plato[];
 };
@@ -130,6 +133,7 @@ export function EstadisticasTab() {
             <Tile label="Ventas" value={String(datos.cantidadVentas)} />
             <Tile label="Total vendido" value={formatoCOP(datos.totalVendido)} />
             <Tile label="Propinas" value={formatoCOP(datos.totalPropinas)} />
+            {datos.totalDomicilios > 0 && <Tile label="Domicilios (envío)" value={formatoCOP(datos.totalDomicilios)} />}
             <Tile label="Ticket promedio" value={formatoCOP(datos.ticketPromedio)} />
           </div>
 
@@ -166,6 +170,18 @@ export function EstadisticasTab() {
                 </span>
               ))
             )}
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm p-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+            <h3 className="w-full text-xs font-semibold uppercase tracking-wide opacity-60 mb-1">Ventas por tipo de servicio</h3>
+            {(datos.ventasPorTipo ?? []).map((t) => (
+              <span key={t.tipo}>
+                <span className="opacity-60">
+                  {ICONO_SERVICIO[t.tipo]} {NOMBRE_SERVICIO[t.tipo]}:
+                </span>{" "}
+                <b>{formatoCOP(t.total)}</b> <span className="opacity-50">({t.cantidad} {t.cantidad === 1 ? "venta" : "ventas"})</span>
+              </span>
+            ))}
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">

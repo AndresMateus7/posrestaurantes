@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
+import { etiquetaServicio } from "@/lib/servicio";
 
 // Lista las cuentas activas (abiertas o divididas, aun sin pagar) del
 // restaurante -- es la pantalla principal de caja: que mesas tienen cuenta
@@ -21,15 +22,20 @@ export async function GET() {
     return NextResponse.json(
       cuentas.map((c) => ({
         id: c.id,
-        mesaId: c.mesa.id,
-        mesaNumero: c.mesa.numero,
+        // Los pedidos para llevar / domicilio no tienen mesa (mesaId null): se identifican por `etiqueta`.
+        tipo: c.tipo,
+        etiqueta: etiquetaServicio({ tipo: c.tipo, numero: c.numero, mesaNumero: c.mesa?.numero ?? null }),
+        clienteNombre: c.clienteNombre,
+        mesaId: c.mesa?.id ?? null,
+        mesaNumero: c.mesa?.numero ?? null,
         // "cuenta_solicitada" = el mesero/cliente ya la cerro y espera el cobro en caja.
-        mesaEstado: c.mesa.estado,
-        meseroId: c.mesa.meseroId,
-        meseroNombre: c.mesa.mesero?.nombre ?? null,
+        mesaEstado: c.mesa?.estado ?? null,
+        meseroId: c.mesa?.meseroId ?? null,
+        meseroNombre: c.mesa?.mesero?.nombre ?? null,
         estado: c.estado,
         subtotal: c.subtotal,
         propina: c.propina,
+        costoDomicilio: c.costoDomicilio,
         total: c.total,
         totalPagado: c.pagos.reduce((a, p) => a + p.monto, 0),
         creadoEn: c.creadoEn,

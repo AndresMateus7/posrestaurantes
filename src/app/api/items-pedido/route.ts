@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
+import { etiquetaConCliente } from "@/lib/servicio";
 import type { EstacionCocina } from "@prisma/client";
 
 // Cola de KDS: items activos (pendiente/en_preparacion), opcionalmente
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
       include: {
         producto: { include: { ingredientes: { include: { ingrediente: true } } } },
         adicionales: { include: { adicional: true } },
-        pedido: { include: { mesa: true } },
+        pedido: { include: { mesa: true, cuenta: { select: { tipo: true, numero: true, clienteNombre: true } } } },
       },
       orderBy: { creadoEn: "asc" },
     });
@@ -35,7 +36,14 @@ export async function GET(req: Request) {
           .map((pi) => pi.ingrediente.nombre);
         return {
           id: it.id,
-          mesaNumero: it.pedido.mesa.numero,
+          mesaNumero: it.pedido.mesa?.numero ?? null,
+          // "Mesa 5", "Domicilio #12 · Juan" o "Para llevar #7 · Ana": a donde va el plato.
+          destino: etiquetaConCliente({
+            tipo: it.pedido.cuenta?.tipo ?? "mesa",
+            numero: it.pedido.cuenta?.numero ?? null,
+            mesaNumero: it.pedido.mesa?.numero ?? null,
+            clienteNombre: it.pedido.cuenta?.clienteNombre ?? null,
+          }),
           nombreProducto: it.producto.nombre,
           cantidad: it.cantidad,
           estacion: it.estacion,

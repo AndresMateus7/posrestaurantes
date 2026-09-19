@@ -33,13 +33,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "proveedor e items son requeridos" }, { status: 400 });
     }
 
-    const factura = await registrarFacturaProveedor(user.restauranteId, user.usuarioId, {
+    const { factura, valorInventarioAntes, valorInventario, impacto } = await registrarFacturaProveedor(user.restauranteId, user.usuarioId, {
       proveedor,
       numeroFactura,
       fecha: fecha ? new Date(fecha) : undefined,
       items,
     });
-    return NextResponse.json(factura, { status: 201 });
+    // Cuanto cambio el costo de cada plato (y su margen) solo lo ve el administrador.
+    return NextResponse.json(
+      { ...factura, valorInventarioAntes, valorInventario, ...(user.rol === "admin" ? { impacto } : {}) },
+      { status: 201 }
+    );
   } catch (error) {
     return apiErrorResponse(error);
   }

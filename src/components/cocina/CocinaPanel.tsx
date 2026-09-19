@@ -5,7 +5,9 @@ import { useEventos } from "@/lib/useEventos";
 
 type ItemKds = {
   id: string;
-  mesaNumero: string;
+  mesaNumero: string | null;
+  // "Mesa 5", "Domicilio #12 · Juan" o "Para llevar #7 · Ana".
+  destino: string;
   nombreProducto: string;
   cantidad: number;
   estacion: "bar" | "parrilla" | "cocina_general";
@@ -81,10 +83,10 @@ export function CocinaPanel() {
 
   useEventos({
     "pedido-creado": (payload) => {
-      const p = payload as { mesaNumero: string; items: { nombreProducto: string }[] };
+      const p = payload as { mesaNumero: string | null; destino?: string; items: { nombreProducto: string }[] };
       cargar();
       reproducirBeep();
-      mostrarToast(`🆕 Nuevo pedido — Mesa ${p.mesaNumero}: ${p.items.map((i) => i.nombreProducto).join(", ")}`);
+      mostrarToast(`🆕 Nuevo pedido — ${p.destino ?? `Mesa ${p.mesaNumero}`}: ${p.items.map((i) => i.nombreProducto).join(", ")}`);
     },
     "item-actualizado": () => cargar(),
   });
@@ -143,7 +145,7 @@ export function CocinaPanel() {
                 className={`bg-gray-800 border-2 ${s.color} rounded-2xl p-4 transition-opacity ${saliendo.has(it.id) ? "opacity-0" : "opacity-100"}`}
               >
                 <div className="flex items-start justify-between">
-                  <span className="text-xs font-semibold bg-white/10 rounded-full px-2 py-0.5">MESA {it.mesaNumero}</span>
+                  <span className="text-xs font-semibold bg-white/10 rounded-full px-2 py-0.5 uppercase">{it.destino ?? `Mesa ${it.mesaNumero}`}</span>
                   <span className={`font-mono text-sm font-bold ${s.texto}`}>{formatoTiempo(ahora - new Date(it.creadoEn).getTime())}</span>
                 </div>
                 <p className="font-semibold text-lg mt-2">

@@ -7,6 +7,7 @@ import { HistorialVentasTab } from "./HistorialVentasTab";
 import { ProductosTab } from "./ProductosTab";
 import { InventarioTab } from "./InventarioTab";
 import { FacturasProveedorTab } from "./FacturasProveedorTab";
+import { CostosTab } from "./CostosTab";
 import { MesasTab } from "./MesasTab";
 import { PlanoTab } from "./PlanoTab";
 import { UsuariosTab } from "./UsuariosTab";
@@ -20,6 +21,7 @@ const TABS = [
   { id: "productos", nombre: "Productos y receta" },
   { id: "inventario", nombre: "Inventario" },
   { id: "facturas", nombre: "Facturas de proveedor" },
+  { id: "costos", nombre: "Costos y precios" },
   { id: "mesas", nombre: "Mesas y QR" },
   { id: "plano", nombre: "Plano del local" },
   { id: "usuarios", nombre: "Usuarios" },
@@ -61,7 +63,8 @@ export function AdminPanel({ restauranteNombre, usuarioId }: { restauranteNombre
         {tab === "tema" && <TemaTab onGuardado={mostrarToast} />}
         {tab === "productos" && <ProductosTab onCambio={mostrarToast} />}
         {tab === "inventario" && <InventarioTab onCambio={mostrarToast} />}
-        {tab === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
+        {tab === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} onIrACostos={() => setTab("costos")} />}
+        {tab === "costos" && <CostosTab onCambio={mostrarToast} />}
         {tab === "mesas" && <MesasTab onCambio={mostrarToast} />}
         {tab === "plano" && <PlanoTab onCambio={mostrarToast} />}
         {tab === "usuarios" && <UsuariosTab onCambio={mostrarToast} />}

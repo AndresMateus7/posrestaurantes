@@ -50,13 +50,26 @@ function aProductoMenu(p: ProductoApi): ProductoMenu {
   };
 }
 
+/** Un plato del carrito tal como lo recibe la API de pedidos. */
+export type ItemEnvio = { productoId: string; cantidad: number; ingredientesRemovidos: string[]; adicionales: string[] };
+/** Lo que responde quien manda el pedido: el mensaje de exito o el error (con `codigo` si la API lo trae). */
+export type ResultadoEnvio = { mensaje: string } | { error: string; codigo?: string };
+
+/**
+ * Pantalla para elegir platos del menu y mandarlos a cocina. La usan el mesero (pedido de una mesa) y
+ * caja (pedido para llevar / domicilio): quien la usa decide a donde se envia con `onEnviar`.
+ */
 export function PedidoMesero({
-  mesa,
+  titulo,
+  tituloCarrito,
   onCerrar,
+  onEnviar,
   onEnviado,
 }: {
-  mesa: { id: string; numero: string };
+  titulo: string;
+  tituloCarrito: string;
   onCerrar: () => void;
+  onEnviar: (items: ItemEnvio[]) => Promise<ResultadoEnvio>;
   onEnviado: (mensaje: string) => void;
 }) {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -116,21 +129,15 @@ export function PedidoMesero({
     setEnviando(true);
     setError(null);
     try {
-      const res = await fetch("/api/pedidos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mesaId: mesa.id,
-          items: carrito.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad, ingredientesRemovidos: l.ingredientesRemovidos, adicionales: l.adicionales })),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (data.codigo === "producto_agotado") cargarProductos();
-        setError(data.error ?? "No se pudo enviar el pedido");
+      const resultado = await onEnviar(
+        carrito.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad, ingredientesRemovidos: l.ingredientesRemovidos, adicionales: l.adicionales }))
+      );
+      if ("error" in resultado) {
+        if (resultado.codigo === "producto_agotado") cargarProductos();
+        setError(resultado.error);
         return;
       }
-      onEnviado(`Pedido enviado a cocina — Mesa ${mesa.numero} 👨‍🍳`);
+      onEnviado(resultado.mensaje);
     } finally {
       setEnviando(false);
     }
@@ -144,7 +151,7 @@ export function PedidoMesero({
             ←
           </button>
           <div className="min-w-0">
-            <h2 className="font-semibold leading-tight">Tomar pedido — Mesa {mesa.numero}</h2>
+            <h2 className="font-semibold leading-tight">{titulo}</h2>
             <p className="text-xs opacity-60">Elige los platos y envíalos a cocina</p>
           </div>
         </div>
@@ -306,7 +313,7 @@ export function PedidoMesero({
           <div className="absolute inset-0 bg-black/50" onClick={() => setVerCarrito(false)} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-md max-h-[85vh] flex flex-col rounded-t-3xl sm:rounded-3xl bg-white">
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-semibold text-lg">Pedido — Mesa {mesa.numero}</h3>
+              <h3 className="font-semibold text-lg">{tituloCarrito}</h3>
               <button onClick={() => setVerCarrito(false)} className="text-2xl leading-none opacity-50">
                 &times;
               </button>

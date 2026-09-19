@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
 import { emitirEvento } from "@/lib/realtime";
+import { sinCostos } from "@/lib/costos";
 
 type LineaReceta = { ingredienteId: string; cantidadUsada: number; removible?: boolean };
 
@@ -14,7 +15,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Producto no existe" }, { status: 404 });
     }
     const receta = await prisma.productoIngrediente.findMany({ where: { productoId: id }, include: { ingrediente: true } });
-    return NextResponse.json(receta);
+    // Los costos de los insumos solo los ven administrador y caja.
+    const veCostos = user.rol === "admin" || user.rol === "caja";
+    return NextResponse.json(veCostos ? receta : receta.map((l) => ({ ...l, ingrediente: sinCostos(l.ingrediente) })));
   } catch (error) {
     return apiErrorResponse(error);
   }

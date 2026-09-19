@@ -25,6 +25,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       venderSinStock: boolean;
       imagenUrl: string | null;
     }>;
+    if (body.precio !== undefined && (!Number.isInteger(body.precio) || body.precio <= 0)) {
+      return NextResponse.json({ error: "El precio debe ser un número entero mayor a 0" }, { status: 400 });
+    }
     const producto = await prisma.producto.update({ where: { id }, data: body });
     emitirEvento(user.restauranteId, "producto-actualizado", { productoId: id });
     return NextResponse.json(producto);

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
 import { disponibleEfectivo } from "@/lib/disponibilidad";
 import { emitirEvento } from "@/lib/realtime";
+import { sinCostos } from "@/lib/costos";
 
 export async function GET(req: Request) {
   try {
@@ -20,8 +21,14 @@ export async function GET(req: Request) {
       },
     });
 
+    // Los costos de los insumos solo los ven administrador y caja (meseros y cocina no).
+    const veCostos = user.rol === "admin" || user.rol === "caja";
     return NextResponse.json(
-      productos.map((p) => ({ ...p, disponibleEfectivo: disponibleEfectivo(p) }))
+      productos.map((p) => ({
+        ...p,
+        ingredientes: veCostos ? p.ingredientes : p.ingredientes.map((pi) => ({ ...pi, ingrediente: sinCostos(pi.ingrediente) })),
+        disponibleEfectivo: disponibleEfectivo(p),
+      }))
     );
   } catch (error) {
     return apiErrorResponse(error);

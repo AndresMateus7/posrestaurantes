@@ -56,6 +56,13 @@ enum EstadoItemPedido {
   cancelado
 }
 
+// Como se sirve una cuenta: en una mesa, para llevar o a domicilio (estos dos no tienen mesa).
+enum TipoServicio {
+  mesa
+  llevar
+  domicilio
+}
+
 enum EstadoCuenta {
   abierta
   dividida
@@ -114,6 +121,10 @@ model Restaurante {
   rotaQr        Boolean  @default(false) @map("rota_qr")
   activo        Boolean  @default(true)
   creadoEn      DateTime @default(now()) @map("creado_en")
+  // Consecutivo de los pedidos para llevar y a domicilio: vuelve a 1 cada dia (dia de Colombia
+  // en `contadorDia`). Se incrementa en una sola sentencia SQL, ver src/lib/pedidos-externos.ts.
+  contadorPedidosExternos Int     @default(0) @map("contador_pedidos_externos")
+  contadorDia             String? @map("contador_dia")
 
   tema          ConfiguracionTema?
   usuarios      Usuario[]
@@ -299,7 +310,11 @@ model Ingrediente {
   stockMinimo   Decimal  @default(0) @db.Decimal(10, 2) @map("stock_minimo")
   // Costo promedio ponderado (CPP) por unidad de medida -- se recalcula en cada
   // factura de proveedor registrada, ver src/lib/facturas-proveedor.ts.
+  // `costoUnidad` lleva decimales (ej. $3,5 por gramo) y es el que se lee para el
+  // valor del inventario y el costo de las recetas. `costoPromedio` es el valor
+  // entero anterior: se sigue escribiendo redondeado por compatibilidad, pero ya no se lee.
   costoPromedio Int      @default(0) @map("costo_promedio")
+  costoUnidad   Float    @default(0) @map("costo_unidad")
   // Ubicacion fisica en la bodega/cocina -- opcional, el restaurante decide si la usa.
   ubicacion     String?
   creadoEn      DateTime @default(now()) @map("creado_en")
@@ -370,7 +385,10 @@ model FacturaProveedorItem {
   ingredienteId String   @map("ingrediente_id")
   ingrediente   Ingrediente @relation(fields: [ingredienteId], references: [id], onDelete: Restrict)
   cantidad      Decimal  @db.Decimal(10, 2)
+  // `subtotal` es lo que se pago por la linea (exacto, en pesos). `costoPorUnidad` = subtotal / cantidad,
+  // con decimales; `costoUnitario` es ese mismo valor redondeado (columna anterior, solo compatibilidad).
   costoUnitario Int      @map("costo_unitario")
+  costoPorUnidad Float   @default(0) @map("costo_por_unidad")
   subtotal      Int
 
   @@index([facturaId])
@@ -417,8 +435,9 @@ model Pedido {
   id             String   @id @default(uuid())
   restauranteId  String   @map("restaurante_id")
   restaurante    Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
-  mesaId         String   @map("mesa_id")
-  mesa           Mesa     @relation(fields: [mesaId], references: [id], onDelete: Restrict)
+  // Null en los pedidos para llevar / a domicilio: no tienen mesa.
+  mesaId         String?  @map("mesa_id")
+  mesa           Mesa?    @relation(fields: [mesaId], references: [id], onDelete: Restrict)
   cuentaId       String?  @map("cuenta_id")
   cuenta         Cuenta?  @relation(fields: [cuentaId], references: [id], onDelete: SetNull)
   origen         OrigenPedido @default(qr_cliente)
@@ -480,20 +499,35 @@ model Cuenta {
   id            String   @id @default(uuid())
   restauranteId String   @map("restaurante_id")
   restaurante   Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
-  mesaId        String   @map("mesa_id")
-  mesa          Mesa     @relation(fields: [mesaId], references: [id], onDelete: Restrict)
+  // Null en las cuentas para llevar / a domicilio: no tienen mesa (ver `tipo`).
+  mesaId        String?  @map("mesa_id")
+  mesa          Mesa?    @relation(fields: [mesaId], references: [id], onDelete: Restrict)
   estado        EstadoCuenta @default(abierta)
   subtotal      Int      @default(0)
   propina       Int      @default(0)
+  // Valor del domicilio (solo `domicilio`); el total es subtotal + propina + costoDomicilio.
+  costoDomicilio Int     @default(0) @map("costo_domicilio")
   total         Int      @default(0)
   creadoEn      DateTime @default(now()) @map("creado_en")
   cerradoEn     DateTime? @map("cerrado_en")
+
+  // Pedidos para llevar / a domicilio que saca caja: consecutivo del dia y datos del cliente.
+  tipo             TipoServicio @default(mesa)
+  numero           Int?
+  clienteNombre    String?  @map("cliente_nombre")
+  clienteTelefono  String?  @map("cliente_telefono")
+  direccion        String?
+  domiciliario     String?
+  notas            String?
+  // Cuando salio el domiciliario con el pedido (solo `domicilio`).
+  despachadoEn     DateTime? @map("despachado_en")
 
   pedidos       Pedido[]
   subCuentas    SubCuenta[]
   pagos         Pago[]
 
   @@index([restauranteId, estado])
+  @@index([restauranteId, tipo])
   @@index([mesaId])
   @@map("cuentas")
 }

@@ -6,10 +6,13 @@ type ItemVenta = { nombreProducto: string; cantidad: number };
 type PagoVenta = { metodo: string; monto: number; recibidoPor: string | null };
 type Venta = {
   id: string;
-  mesaNumero: string;
+  tipo: "mesa" | "llevar" | "domicilio";
+  // "Mesa 5", "Domicilio #12 · Juan" o "Para llevar #7 · Ana".
+  etiqueta: string;
   cerradoEn: string;
   subtotal: number;
   propina: number;
+  costoDomicilio: number;
   total: number;
   items: ItemVenta[];
   pagos: PagoVenta[];
@@ -79,9 +82,9 @@ export function HistorialVentasTab() {
     const filas = ventas.map((v) => {
       const items = v.items.map((i) => `${i.cantidad}x ${i.nombreProducto}`).join("; ");
       const metodos = v.pagos.map((p) => `${ETIQUETA_METODO[p.metodo] ?? p.metodo} ${p.monto}`).join(" + ");
-      return [formatoFechaHora(v.cerradoEn), `Mesa ${v.mesaNumero}`, items, v.subtotal, v.propina, v.total, metodos].map(csvCelda).join(",");
+      return [formatoFechaHora(v.cerradoEn), v.etiqueta, items, v.subtotal, v.costoDomicilio, v.propina, v.total, metodos].map(csvCelda).join(",");
     });
-    const csv = ["Fecha,Mesa,Items,Subtotal,Propina,Total,Metodos".split(",").map(csvCelda).join(","), ...filas].join("\n");
+    const csv = ["Fecha,Servicio,Items,Subtotal,Domicilio,Propina,Total,Metodos".split(",").map(csvCelda).join(","), ...filas].join("\n");
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -145,7 +148,7 @@ export function HistorialVentasTab() {
           <thead className="bg-gray-50 text-left text-xs uppercase opacity-60">
             <tr>
               <th className="px-4 py-3">Fecha</th>
-              <th className="px-4 py-3">Mesa</th>
+              <th className="px-4 py-3">Servicio</th>
               <th className="px-4 py-3">Platos</th>
               <th className="px-4 py-3">Total</th>
               <th className="px-4 py-3">Método(s)</th>
@@ -159,7 +162,7 @@ export function HistorialVentasTab() {
                 <Fragment key={v.id}>
                   <tr className="border-t border-gray-100">
                     <td className="px-4 py-3 whitespace-nowrap text-xs">{formatoFechaHora(v.cerradoEn)}</td>
-                    <td className="px-4 py-3">Mesa {v.mesaNumero}</td>
+                    <td className="px-4 py-3">{v.etiqueta}</td>
                     <td className="px-4 py-3 text-xs opacity-70">{platosVendidos} plato(s)</td>
                     <td className="px-4 py-3 font-semibold">{formatoCOP(v.total)}</td>
                     <td className="px-4 py-3 text-xs opacity-70">{v.pagos.map((p) => ETIQUETA_METODO[p.metodo] ?? p.metodo).join(" + ")}</td>
@@ -185,6 +188,12 @@ export function HistorialVentasTab() {
                               <span className="opacity-60">Subtotal</span>
                               <span>{formatoCOP(v.subtotal)}</span>
                             </div>
+                            {v.costoDomicilio > 0 && (
+                              <div className="flex justify-between">
+                                <span className="opacity-60">Domicilio</span>
+                                <span>{formatoCOP(v.costoDomicilio)}</span>
+                              </div>
+                            )}
                             <div className="flex justify-between">
                               <span className="opacity-60">Propina</span>
                               <span>{formatoCOP(v.propina)}</span>

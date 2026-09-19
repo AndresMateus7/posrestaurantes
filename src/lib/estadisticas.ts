@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { etiquetaConCliente } from "@/lib/servicio";
 
 export type RangoFechas = { desde: Date; hasta: Date };
 
@@ -30,14 +31,21 @@ export type PlatoEstadistica = {
 export async function obtenerEstadisticasVentas(restauranteId: string, { desde, hasta }: RangoFechas) {
   const cuentas = await prisma.cuenta.findMany({
     where: { restauranteId, estado: "pagada", cerradoEn: { gte: desde, lte: hasta } },
-    select: { id: true, subtotal: true, propina: true, total: true, cerradoEn: true },
+    select: { id: true, subtotal: true, propina: true, costoDomicilio: true, total: true, cerradoEn: true, tipo: true },
   });
 
   const cantidadVentas = cuentas.length;
   const totalVendido = cuentas.reduce((acc, c) => acc + c.subtotal, 0);
   const totalPropinas = cuentas.reduce((acc, c) => acc + c.propina, 0);
+  const totalDomicilios = cuentas.reduce((acc, c) => acc + c.costoDomicilio, 0);
   const totalCobrado = cuentas.reduce((acc, c) => acc + c.total, 0);
   const ticketPromedio = cantidadVentas > 0 ? Math.round(totalCobrado / cantidadVentas) : 0;
+
+  // Cuanto entra por cada forma de servir: en mesa, para llevar o a domicilio.
+  const ventasPorTipo = (["mesa", "llevar", "domicilio"] as const).map((tipo) => {
+    const deTipo = cuentas.filter((c) => c.tipo === tipo);
+    return { tipo, cantidad: deTipo.length, total: deTipo.reduce((acc, c) => acc + c.total, 0) };
+  });
 
   const porDia = new Map<string, number>();
   for (const c of cuentas) {
@@ -102,10 +110,12 @@ export async function obtenerEstadisticasVentas(restauranteId: string, { desde, 
     cantidadVentas,
     totalVendido,
     totalPropinas,
+    totalDomicilios,
     totalCobrado,
     ticketPromedio,
     ventasPorDia,
     ventasPorMetodo,
+    ventasPorTipo,
     masVendidos,
     menosVendidos,
   };
@@ -125,10 +135,13 @@ export async function listarHistorialVentas(restauranteId: string, { desde, hast
 
   return cuentas.map((c) => ({
     id: c.id,
-    mesaNumero: c.mesa.numero,
+    tipo: c.tipo,
+    mesaNumero: c.mesa?.numero ?? null,
+    etiqueta: etiquetaConCliente({ tipo: c.tipo, numero: c.numero, mesaNumero: c.mesa?.numero ?? null, clienteNombre: c.clienteNombre }),
     cerradoEn: c.cerradoEn,
     subtotal: c.subtotal,
     propina: c.propina,
+    costoDomicilio: c.costoDomicilio,
     total: c.total,
     items: c.pedidos.flatMap((p) => p.items.filter((it) => it.estado !== "cancelado").map((it) => ({ nombreProducto: it.producto.nombre, cantidad: it.cantidad }))),
     pagos: c.pagos.map((p) => ({ metodo: p.metodo, monto: p.monto, recibidoPor: p.usuario?.nombre ?? null })),

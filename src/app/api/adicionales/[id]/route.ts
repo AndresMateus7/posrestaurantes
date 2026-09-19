@@ -14,6 +14,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params;
     await verificarPropiedad(user.restauranteId, id);
     const body = (await req.json()) as Partial<{ nombre: string; precio: number; activo: boolean }>;
+    if (body.precio !== undefined && (!Number.isInteger(body.precio) || body.precio <= 0)) {
+      return NextResponse.json({ error: "El precio debe ser un número entero mayor a 0" }, { status: 400 });
+    }
     const adicional = await prisma.adicional.update({ where: { id }, data: body });
     return NextResponse.json(adicional);
   } catch (error) {

@@ -20,14 +20,14 @@ export async function obtenerOCrearCuentaAbierta(restauranteId: string, mesaId: 
 export async function recalcularCuenta(cuentaId: string) {
   const cuenta = await prisma.cuenta.findUniqueOrThrow({ where: { id: cuentaId } });
   const items = await prisma.itemPedido.findMany({
-    where: { pedido: { cuentaId } },
+    where: { estado: { not: "cancelado" }, pedido: { cuentaId } },
     include: { adicionales: true },
   });
   const subtotal = items.reduce((acc, it) => {
     const extras = it.adicionales.reduce((a, ad) => a + ad.precioUnitario * ad.cantidad, 0);
     return acc + it.precioUnitario * it.cantidad + extras;
   }, 0);
-  const total = subtotal + cuenta.propina;
+  const total = subtotal + cuenta.propina + cuenta.costoDomicilio;
   const actualizada = await prisma.cuenta.update({ where: { id: cuentaId }, data: { subtotal, total } });
   emitirEvento(cuenta.restauranteId, "cuenta-actualizada", { cuentaId });
   return actualizada;
@@ -105,7 +105,7 @@ export async function registrarPropina(restauranteId: string, cuentaId: string, 
   if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
 
   const propina = valor.porcentaje != null ? Math.round(cuenta.subtotal * (valor.porcentaje / 100)) : Math.round(valor.monto ?? 0);
-  const actualizada = await prisma.cuenta.update({ where: { id: cuentaId }, data: { propina, total: cuenta.subtotal + propina } });
+  const actualizada = await prisma.cuenta.update({ where: { id: cuentaId }, data: { propina, total: cuenta.subtotal + propina + cuenta.costoDomicilio } });
   emitirEvento(restauranteId, "cuenta-actualizada", { cuentaId });
   return actualizada;
 }
@@ -158,15 +158,18 @@ export async function cerrarCuenta(restauranteId: string, cuentaId: string) {
     throw new CuentaError("pago_incompleto", `Faltan ${cuenta.total - totalPagado} por pagar`);
   }
 
+  const { mesaId } = cuenta;
   await prisma.$transaction([
     prisma.cuenta.update({ where: { id: cuentaId }, data: { estado: "pagada", cerradoEn: new Date() } }),
     // Al liberar la mesa tambien se libera al mesero: la siguiente ocupacion
-    // la asigna quien la abra (ver src/lib/mesas.ts).
-    prisma.mesa.update({ where: { id: cuenta.mesaId }, data: { estado: "libre", meseroId: null } }),
+    // la asigna quien la abra (ver src/lib/mesas.ts). Los pedidos para llevar /
+    // domicilio no tienen mesa.
+    ...(mesaId ? [prisma.mesa.update({ where: { id: mesaId }, data: { estado: "libre" as const, meseroId: null } })] : []),
   ]);
-  // Ya cobrada: los "Piden la cuenta"/"Llaman al mesero" de esa mesa dejan de estar pendientes.
-  await resolverLlamadosDeMesa(restauranteId, cuenta.mesaId);
-
-  emitirEvento(restauranteId, "mesa-actualizada", { mesaId: cuenta.mesaId, estado: "libre" });
-  emitirEvento(restauranteId, "cuenta-cerrada", { cuentaId, mesaId: cuenta.mesaId });
+  if (mesaId) {
+    // Ya cobrada: los "Piden la cuenta"/"Llaman al mesero" de esa mesa dejan de estar pendientes.
+    await resolverLlamadosDeMesa(restauranteId, mesaId);
+    emitirEvento(restauranteId, "mesa-actualizada", { mesaId, estado: "libre" });
+  }
+  emitirEvento(restauranteId, "cuenta-cerrada", { cuentaId, mesaId });
 }

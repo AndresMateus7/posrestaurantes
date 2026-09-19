@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { emitirEvento } from "@/lib/realtime";
+import { calcularImpacto, valorInventario } from "@/lib/costos";
 
 export class FacturaProveedorError extends Error {
   constructor(public codigo: string, message: string) {
@@ -7,7 +8,11 @@ export class FacturaProveedorError extends Error {
   }
 }
 
-export type ItemFacturaProveedor = { ingredienteId: string; cantidad: number; costoUnitario: number };
+/**
+ * Una linea de la factura: `cantidad` en la unidad del inventario (g, ml, unidades) y lo que se PAGO
+ * por ella (`valorTotal`, en pesos). `costoUnitario` (valor por unidad) se acepta como alternativa.
+ */
+export type ItemFacturaProveedor = { ingredienteId: string; cantidad: number; valorTotal?: number; costoUnitario?: number };
 
 const incluirDetalle = {
   items: { include: { ingrediente: { select: { nombre: true, unidadMedida: true } } } },
@@ -19,6 +24,8 @@ const incluirDetalle = {
  * el usuario (no una formula automatica como el viejo boton "Reabastecer").
  * Actualiza stock y el costo promedio ponderado (CPP) de cada ingrediente en
  * una sola transaccion, igual que sistema-pos (ver factura_compra_items).
+ * Devuelve ademas el valor del inventario antes y despues, y los platos cuyo
+ * costo cambio con esta compra.
  */
 export async function registrarFacturaProveedor(
   restauranteId: string,
@@ -27,32 +34,40 @@ export async function registrarFacturaProveedor(
 ) {
   if (!data.proveedor.trim()) throw new FacturaProveedorError("proveedor_requerido", "El proveedor es requerido");
   if (data.items.length === 0) throw new FacturaProveedorError("sin_items", "La factura no tiene items");
-  for (const it of data.items) {
+
+  // Valor pagado por linea, en pesos enteros.
+  const lineas = data.items.map((it) => {
     if (!(it.cantidad > 0)) throw new FacturaProveedorError("cantidad_invalida", "La cantidad debe ser mayor a 0");
-    if (!(it.costoUnitario >= 0)) throw new FacturaProveedorError("costo_invalido", "El costo unitario no puede ser negativo");
-  }
+    const valor = it.valorTotal ?? (it.costoUnitario !== undefined ? it.cantidad * it.costoUnitario : NaN);
+    if (!(valor >= 0)) throw new FacturaProveedorError("valor_invalido", "Falta el valor pagado de cada producto (puede ser 0, no negativo)");
+    return { ingredienteId: it.ingredienteId, cantidad: it.cantidad, valor: Math.round(valor) };
+  });
+
+  const valorAntes = await valorInventario(restauranteId);
+  const costosAntes = new Map<string, number>();
 
   const facturaId = await prisma.$transaction(async (tx) => {
-    const itemsData: { ingredienteId: string; cantidad: number; costoUnitario: number; subtotal: number }[] = [];
+    const itemsData: { ingredienteId: string; cantidad: number; costoUnitario: number; costoPorUnidad: number; subtotal: number }[] = [];
     let total = 0;
 
-    for (const it of data.items) {
+    for (const it of lineas) {
       const ingrediente = await tx.ingrediente.findUnique({ where: { id: it.ingredienteId } });
       if (!ingrediente || ingrediente.restauranteId !== restauranteId) {
         throw new FacturaProveedorError("ingrediente_no_existe", `Ingrediente ${it.ingredienteId} no existe`);
       }
+      if (!costosAntes.has(ingrediente.id)) costosAntes.set(ingrediente.id, ingrediente.costoUnidad);
 
-      const stockAnterior = ingrediente.stockActual.toNumber();
-      const nuevoStock = stockAnterior + it.cantidad;
+      // Un stock negativo (se vendio sin inventario) no pesa en el promedio.
+      const stockAnterior = Math.max(0, ingrediente.stockActual.toNumber());
+      const costoPorUnidad = it.valor / it.cantidad;
       // CPP: promedio ponderado entre lo que ya habia en bodega y lo recien comprado.
-      const nuevoCosto =
-        nuevoStock > 0 ? Math.round((stockAnterior * ingrediente.costoPromedio + it.cantidad * it.costoUnitario) / nuevoStock) : it.costoUnitario;
-      const subtotal = Math.round(it.cantidad * it.costoUnitario);
-      total += subtotal;
+      const nuevoCosto = (stockAnterior * ingrediente.costoUnidad + it.valor) / (stockAnterior + it.cantidad);
+      total += it.valor;
 
       await tx.ingrediente.update({
         where: { id: it.ingredienteId },
-        data: { stockActual: { increment: it.cantidad }, costoPromedio: nuevoCosto },
+        // costoPromedio (entero) sigue escribiendose por compatibilidad; el que se lee es costoUnidad.
+        data: { stockActual: { increment: it.cantidad }, costoUnidad: nuevoCosto, costoPromedio: Math.round(nuevoCosto) },
       });
       await tx.movimientoInventario.create({
         data: {
@@ -64,7 +79,7 @@ export async function registrarFacturaProveedor(
         },
       });
 
-      itemsData.push({ ingredienteId: it.ingredienteId, cantidad: it.cantidad, costoUnitario: it.costoUnitario, subtotal });
+      itemsData.push({ ingredienteId: it.ingredienteId, cantidad: it.cantidad, costoUnitario: Math.round(costoPorUnidad), costoPorUnidad, subtotal: it.valor });
     }
 
     const factura = await tx.facturaProveedor.create({
@@ -81,12 +96,17 @@ export async function registrarFacturaProveedor(
     return factura.id;
   });
 
-  for (const it of data.items) {
+  for (const it of lineas) {
     const actualizado = await prisma.ingrediente.findUniqueOrThrow({ where: { id: it.ingredienteId } });
     emitirEvento(restauranteId, "inventario-actualizado", { ingredienteId: it.ingredienteId, stockActual: actualizado.stockActual });
   }
 
-  return prisma.facturaProveedor.findUniqueOrThrow({ where: { id: facturaId }, include: incluirDetalle });
+  const [factura, valorDespues, impacto] = await Promise.all([
+    prisma.facturaProveedor.findUniqueOrThrow({ where: { id: facturaId }, include: incluirDetalle }),
+    valorInventario(restauranteId),
+    calcularImpacto(restauranteId, costosAntes),
+  ]);
+  return { factura, valorInventarioAntes: valorAntes, valorInventario: valorDespues, impacto };
 }
 
 export async function listarFacturasProveedor(restauranteId: string, rango?: { desde: Date; hasta: Date }) {
@@ -109,11 +129,12 @@ function inicioMesBogota(): Date {
 export async function resumenFacturasProveedor(restauranteId: string) {
   const inicioMes = inicioMesBogota();
 
-  const [facturasTotales, sumaTotal, sumaMes, proveedores] = await Promise.all([
+  const [facturasTotales, sumaTotal, sumaMes, proveedores, valor] = await Promise.all([
     prisma.facturaProveedor.count({ where: { restauranteId } }),
     prisma.facturaProveedor.aggregate({ where: { restauranteId }, _sum: { total: true } }),
     prisma.facturaProveedor.aggregate({ where: { restauranteId, fecha: { gte: inicioMes } }, _sum: { total: true } }),
     prisma.facturaProveedor.findMany({ where: { restauranteId }, select: { proveedor: true }, distinct: ["proveedor"] }),
+    valorInventario(restauranteId),
   ]);
 
   return {
@@ -121,5 +142,6 @@ export async function resumenFacturasProveedor(restauranteId: string) {
     totalHistorico: sumaTotal._sum.total ?? 0,
     totalEsteMes: sumaMes._sum.total ?? 0,
     proveedoresDistintos: proveedores.length,
+    valorInventario: valor,
   };
 }

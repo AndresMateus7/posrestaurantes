@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
 import { useRefrescoPeriodico } from "@/lib/useRefrescoPeriodico";
 import { reproducirBeep } from "@/lib/beep";
@@ -9,6 +9,8 @@ import { FacturasProveedorTab } from "@/components/admin/FacturasProveedorTab";
 import { MeseroPanel } from "@/components/mesero/MeseroPanel";
 import { LlamadosLista, type LlamadoPendiente } from "@/components/mesero/LlamadosLista";
 import { AsignarMesero } from "@/components/mesero/AsignarMesero";
+import { PedidosExternosTab, type PedidoExterno } from "./PedidosExternosTab";
+import { ICONO_SERVICIO, type TipoServicio } from "@/lib/servicio";
 
 type TurnoResumen = {
   id: string;
@@ -27,21 +29,26 @@ type TurnoResumen = {
 
 type CuentaResumen = {
   id: string;
-  mesaId: string;
-  mesaNumero: string;
+  tipo: TipoServicio;
+  // "Mesa 5", "Domicilio #12" o "Para llevar #7" (los dos ultimos no tienen mesa: mesaId null).
+  etiqueta: string;
+  clienteNombre: string | null;
+  mesaId: string | null;
+  mesaNumero: string | null;
   // "cuenta_solicitada" = la cuenta ya se cerro (mesero, caja o cliente) y espera el cobro.
-  mesaEstado: string;
+  mesaEstado: string | null;
   meseroId: string | null;
   meseroNombre: string | null;
   estado: string;
   subtotal: number;
   propina: number;
+  costoDomicilio: number;
   total: number;
   totalPagado: number;
   creadoEn: string;
 };
 
-type CuentaCobrada = { id: string; mesaNumero: string; cerradoEn: string; total: number; pagos: { metodo: string; monto: number }[] };
+type CuentaCobrada = { id: string; etiqueta: string; cerradoEn: string; total: number; pagos: { metodo: string; monto: number }[] };
 
 type ItemDetalle = {
   id: string;
@@ -63,13 +70,18 @@ type SubCuentaDetalle = {
 type PagoDetalle = { id: string; metodo: string; monto: number; subCuentaId: string | null; creadoEn: string };
 type CuentaDetalle = {
   id: string;
-  mesaId: string;
-  mesaNumero: string;
+  tipo: TipoServicio;
+  etiqueta: string;
+  // Datos del cliente en los pedidos para llevar / domicilio; null en una mesa.
+  cliente: { nombre: string | null; telefono: string | null; direccion: string | null; domiciliario: string | null; notas: string | null } | null;
+  mesaId: string | null;
+  mesaNumero: string | null;
   meseroId: string | null;
   meseroNombre: string | null;
   estado: string;
   subtotal: number;
   propina: number;
+  costoDomicilio: number;
   total: number;
   items: ItemDetalle[];
   subCuentas: SubCuentaDetalle[];
@@ -116,7 +128,11 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   const [mostrarCerrarTurno, setMostrarCerrarTurno] = useState(false);
   const [montoFinalInput, setMontoFinalInput] = useState("");
 
-  const [vista, setVista] = useState<"caja" | "salon" | "historial" | "facturas">("caja");
+  const [vista, setVista] = useState<"caja" | "salon" | "externos" | "historial" | "facturas">("caja");
+  // Pedidos para llevar y a domicilio en marcha (sin entregar todavia o sin cobrar).
+  const [pedidosExternos, setPedidosExternos] = useState<PedidoExterno[]>([]);
+  // Cuenta que estoy cerrando yo: su aviso "cuenta cerrada" en vivo no es de "otra caja".
+  const cierrePropioRef = useRef<string | null>(null);
   // Llamados de TODOS los meseros ("Llaman al mesero" / "Piden la cuenta"): caja los ve
   // y salen de la lista cuando alguien pulsa "Atender" o se cobra la cuenta de esa mesa.
   const [llamados, setLlamados] = useState<LlamadoPendiente[]>([]);
@@ -158,15 +174,27 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     []
   );
 
+  const cargarExternos = useCallback(
+    () =>
+      fetch("/api/pedidos-externos")
+        .then((r) => r.json())
+        .then((lista: unknown) => {
+          if (Array.isArray(lista)) setPedidosExternos(lista as PedidoExterno[]);
+        }),
+    []
+  );
+
   useEffect(() => {
     cargarTurno();
     cargarLlamados();
-  }, [cargarTurno, cargarLlamados]);
+    cargarExternos();
+  }, [cargarTurno, cargarLlamados, cargarExternos]);
 
-  // Red de seguridad del canal en vivo: llamados y cuentas se refrescan solos.
+  // Red de seguridad del canal en vivo: llamados, cuentas y pedidos para llevar / domicilio se refrescan solos.
   useRefrescoPeriodico(() => {
     cargarLlamados();
     cargarCuentas();
+    cargarExternos();
   });
 
   useEffect(() => {
@@ -190,19 +218,28 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     "cuenta-actualizada": (payload) => {
       cargarCuentas();
       cargarTurno();
+      cargarExternos();
       const p = payload as { cuentaId: string };
       if (cuentaSeleccionadaId === p.cuentaId) cargarDetalle(p.cuentaId);
     },
     "cuenta-cerrada": (payload) => {
       cargarCuentas();
       cargarCobradas();
+      cargarExternos();
       const p = payload as { cuentaId: string };
       if (cuentaSeleccionadaId === p.cuentaId) {
         cerrarDetalle();
-        mostrarToast("Esa cuenta se cerró desde otra caja");
+        // El aviso en vivo puede llegar antes que la respuesta de mi propio cierre: solo avisa si la cerro otra caja.
+        if (cierrePropioRef.current !== p.cuentaId) mostrarToast("Esa cuenta se cerró desde otra caja");
       }
     },
-    "pedido-creado": () => cargarCuentas(),
+    "pedido-creado": () => {
+      cargarCuentas();
+      cargarExternos();
+    },
+    // Cocina avanza un plato o se entrega un pedido: cambia el estado de los pedidos para llevar / domicilio.
+    "item-actualizado": () => cargarExternos(),
+    "pedido-entregado": () => cargarExternos(),
     // Caja ve los llamados de todos los meseros. En "Mesas y pedidos" el propio panel avisa y
     // suena; en las demas vistas avisa Caja (lista + pitido + aviso).
     "llamado-creado": (payload) => {
@@ -381,7 +418,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     setMostrarPago(false);
     // Si con este pago queda saldada, la cuenta se cierra sola y la mesa se libera.
     if (detalle.totalPagado + monto >= detalle.total) {
-      await cerrarCuentaDe(detalle.id, `Mesa ${detalle.mesaNumero} cobrada: ${formatoCOP(detalle.total)} — cuenta cerrada, mesa liberada`);
+      await cerrarCuentaDe(detalle.id, `${detalle.etiqueta} cobrado: ${formatoCOP(detalle.total)} — cuenta cerrada${detalle.mesaId ? ", mesa liberada" : ""}`);
       return;
     }
     cargarDetalle(detalle.id);
@@ -389,9 +426,11 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   }
 
   async function cerrarCuentaDe(id: string, mensaje: string) {
+    cierrePropioRef.current = id;
     const res = await fetch(`/api/cuentas/${id}/cerrar`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) {
+      cierrePropioRef.current = null;
       mostrarToast(data.error ?? "No se pudo cerrar la cuenta");
       cargarDetalle(id);
       return;
@@ -404,7 +443,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   }
 
   function cerrarCuentaActual() {
-    if (detalle) return cerrarCuentaDe(detalle.id, `Mesa ${detalle.mesaNumero} cerrada, mesa liberada`);
+    if (detalle) return cerrarCuentaDe(detalle.id, `${detalle.etiqueta} cerrado${detalle.mesaId ? ", mesa liberada" : ""}`);
   }
 
   async function confirmarMovimiento() {
@@ -488,6 +527,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
               [
                 ["caja", "Caja"],
                 ["salon", "Mesas y pedidos"],
+                ["externos", "Domicilios y para llevar"],
                 ["historial", "Historial de ventas"],
                 ["facturas", "Facturas de proveedor"],
               ] as const
@@ -502,6 +542,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                 {(id === "salon" || id === "caja") && llamados.length > 0 && (
                   <span className="ml-1.5 bg-red-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{llamados.length}</span>
                 )}
+                {id === "externos" && pedidosExternos.length > 0 && (
+                  <span className="ml-1.5 bg-blue-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{pedidosExternos.length}</span>
+                )}
               </button>
             ))}
           </nav>
@@ -510,6 +553,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
 
       <main className="max-w-5xl mx-auto px-4 py-5 space-y-6">
         {vista === "salon" && <MeseroPanel embebido usuarioId={usuarioId} rol={rol} />}
+        {vista === "externos" && (
+          <PedidosExternosTab pedidos={pedidosExternos} hayTurno={!!turno} onRecargar={cargarExternos} onCobrar={abrirDetalleCuenta} onCambio={mostrarToast} />
+        )}
         {vista === "historial" && <HistorialVentasTab />}
         {vista === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
         {vista === "caja" && (
@@ -557,7 +603,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
 
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60">Cuentas activas ({cuentas.length})</h2>
-          <p className="text-xs opacity-50 mb-2">Todas las mesas con consumo. Las que ya cerró el mesero salen primero, con el valor listo para cobrar.</p>
+          <p className="text-xs opacity-50 mb-2">Todas las mesas con consumo, y los pedidos para llevar y a domicilio. Las que ya cerró el mesero salen primero, con el valor listo para cobrar.</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {cuentasOrdenadas.map((c) => {
               const pendiente = c.total - c.totalPagado;
@@ -573,14 +619,16 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
               const etiqueta = pendiente <= 0 ? "Pagada" : cerrada ? "🧾 Cuenta cerrada" : "En curso";
               return (
                 <button key={c.id} onClick={() => abrirDetalleCuenta(c.id)} className={`rounded-2xl border-2 p-4 text-left transition hover:brightness-95 ${estilo}`}>
-                  <p className="text-2xl font-bold">Mesa {c.mesaNumero}</p>
+                  <p className={`${c.mesaId ? "text-2xl" : "text-lg"} font-bold leading-tight`}>
+                    {c.mesaId ? c.etiqueta : `${ICONO_SERVICIO[c.tipo]} ${c.etiqueta}`}
+                  </p>
                   <p className="text-lg font-bold mt-0.5">{formatoCOP(c.total)}</p>
                   <p className="text-[11px] font-semibold mt-0.5">
                     {etiqueta}
                     {c.estado === "dividida" && " · dividida"}
                   </p>
                   {pendiente > 0 && c.totalPagado > 0 && <p className="text-[11px] opacity-70">Faltan {formatoCOP(pendiente)}</p>}
-                  <p className="text-[11px] font-medium mt-1 truncate">🧑‍🍳 {c.meseroNombre ?? "Sin mesero"}</p>
+                  <p className="text-[11px] font-medium mt-1 truncate">{c.mesaId ? `🧑‍🍳 ${c.meseroNombre ?? "Sin mesero"}` : `👤 ${c.clienteNombre ?? "Sin nombre"}`}</p>
                 </button>
               );
             })}
@@ -596,7 +644,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
             <div className="bg-white rounded-2xl shadow-sm divide-y divide-gray-100">
               {cobradas.map((c) => (
                 <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                  <span className="font-semibold w-20 shrink-0">Mesa {c.mesaNumero}</span>
+                  <span className="font-semibold w-36 shrink-0 truncate">{c.etiqueta}</span>
                   <span className="text-xs opacity-60 flex-1 truncate">
                     {new Date(c.cerradoEn).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", timeZone: "America/Bogota" })}
                     {" · "}
@@ -616,23 +664,41 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
         <div className="fixed inset-0 z-40">
           <div className="absolute inset-0 bg-black/50" onClick={cerrarDetalle} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-5">
-            <h3 className="text-lg font-semibold">Mesa {detalle.mesaNumero}</h3>
-            <p className="text-xs opacity-60">Atiende: {detalle.meseroNombre ?? "sin mesero"}</p>
+            <h3 className="text-lg font-semibold">
+              {detalle.mesaId ? detalle.etiqueta : `${ICONO_SERVICIO[detalle.tipo]} ${detalle.etiqueta}`}
+            </h3>
+            {detalle.mesaId ? (
+              <p className="text-xs opacity-60">Atiende: {detalle.meseroNombre ?? "sin mesero"}</p>
+            ) : (
+              detalle.cliente && (
+                <div className="mt-1 text-sm space-y-0.5">
+                  <p>
+                    👤 <b>{detalle.cliente.nombre}</b>
+                    {detalle.cliente.telefono && <span className="opacity-70"> · 📞 {detalle.cliente.telefono}</span>}
+                  </p>
+                  {detalle.cliente.direccion && <p className="opacity-80">📍 {detalle.cliente.direccion}</p>}
+                  {detalle.cliente.domiciliario && <p className="text-xs opacity-60">🛵 Domiciliario: {detalle.cliente.domiciliario}</p>}
+                  {detalle.cliente.notas && <p className="text-xs bg-amber-50 text-amber-900 rounded-lg px-2 py-1">📝 {detalle.cliente.notas}</p>}
+                </div>
+              )
+            )}
             {detalleCerrada && <p className="mt-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl px-3 py-1.5 text-xs">🧾 Cuenta cerrada — lista para cobrar</p>}
-            <div className="mt-3">
-              <AsignarMesero
-                key={detalle.mesaId}
-                mesaId={detalle.mesaId}
-                meseroIdActual={detalle.meseroId}
-                onAsignado={(mesero) => {
-                  cargarDetalle(detalle.id);
-                  cargarCuentas();
-                  cargarLlamados();
-                  mostrarToast(mesero ? `Mesa ${detalle.mesaNumero} asignada a ${mesero.nombre}` : `Mesa ${detalle.mesaNumero} quedó sin mesero`);
-                }}
-                onError={mostrarToast}
-              />
-            </div>
+            {detalle.mesaId && (
+              <div className="mt-3">
+                <AsignarMesero
+                  key={detalle.mesaId}
+                  mesaId={detalle.mesaId}
+                  meseroIdActual={detalle.meseroId}
+                  onAsignado={(mesero) => {
+                    cargarDetalle(detalle.id);
+                    cargarCuentas();
+                    cargarLlamados();
+                    mostrarToast(mesero ? `${detalle.etiqueta} asignada a ${mesero.nombre}` : `${detalle.etiqueta} quedó sin mesero`);
+                  }}
+                  onError={mostrarToast}
+                />
+              </div>
+            )}
 
             <div className="space-y-2 mt-3">
               {detalle.items.map((it) => (
@@ -651,6 +717,12 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                 <span className="opacity-60">Subtotal</span>
                 <span>{formatoCOP(detalle.subtotal)}</span>
               </div>
+              {detalle.costoDomicilio > 0 && (
+                <div className="flex justify-between">
+                  <span className="opacity-60">Domicilio</span>
+                  <span>{formatoCOP(detalle.costoDomicilio)}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="opacity-60">Propina</span>
                 <div className="flex gap-1">
@@ -735,7 +807,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMostrarDividir(false)} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-5">
-            <h3 className="text-lg font-semibold">Dividir cuenta — Mesa {detalle.mesaNumero}</h3>
+            <h3 className="text-lg font-semibold">Dividir cuenta — {detalle.etiqueta}</h3>
             <div className="flex gap-2 mt-3">
               <button
                 onClick={() => setModoDividir("partes_iguales")}

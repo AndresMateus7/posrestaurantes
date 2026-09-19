@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse, ApiAuthError } from "@/lib/api-auth";
+import { etiquetaServicio } from "@/lib/servicio";
 
 // Detalle completo de una cuenta: pedidos+items (para saber que se consumio),
 // sub-cuentas (si ya se dividio) y pagos ya registrados. Es lo que pinta la
@@ -30,17 +31,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     return NextResponse.json({
       id: cuenta.id,
-      mesaId: cuenta.mesa.id,
-      mesaNumero: cuenta.mesa.numero,
-      meseroId: cuenta.mesa.meseroId,
-      meseroNombre: cuenta.mesa.mesero?.nombre ?? null,
+      // Los pedidos para llevar / domicilio no tienen mesa (mesaId null): llevan los datos del cliente.
+      tipo: cuenta.tipo,
+      etiqueta: etiquetaServicio({ tipo: cuenta.tipo, numero: cuenta.numero, mesaNumero: cuenta.mesa?.numero ?? null }),
+      cliente: cuenta.tipo === "mesa" ? null : { nombre: cuenta.clienteNombre, telefono: cuenta.clienteTelefono, direccion: cuenta.direccion, domiciliario: cuenta.domiciliario, notas: cuenta.notas },
+      mesaId: cuenta.mesa?.id ?? null,
+      mesaNumero: cuenta.mesa?.numero ?? null,
+      meseroId: cuenta.mesa?.meseroId ?? null,
+      meseroNombre: cuenta.mesa?.mesero?.nombre ?? null,
       estado: cuenta.estado,
       subtotal: cuenta.subtotal,
       propina: cuenta.propina,
+      costoDomicilio: cuenta.costoDomicilio,
       total: cuenta.total,
       creadoEn: cuenta.creadoEn,
       items: cuenta.pedidos.flatMap((p) =>
-        p.items.map((it) => ({
+        p.items.filter((it) => it.estado !== "cancelado").map((it) => ({
           id: it.id,
           pedidoId: p.id,
           nombreProducto: it.producto.nombre,

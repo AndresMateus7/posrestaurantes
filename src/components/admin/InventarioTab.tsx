@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Tile } from "./Tile";
+import { formatoCOP, textoCostoInsumo } from "@/lib/precios";
 
 type Ingrediente = {
   id: string;
@@ -8,7 +10,7 @@ type Ingrediente = {
   unidadMedida: string;
   stockActual: string;
   stockMinimo: string;
-  costoPromedio: number;
+  costoUnidad: number;
   ubicacion: string | null;
   creadoEn: string;
   ultimaEntrada: string | null;
@@ -25,7 +27,8 @@ function estadoStock(ing: Ingrediente) {
 }
 
 const formatoFecha = (iso: string) => new Date(iso).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" });
-const formatoCOP = (v: number) => "$" + Math.round(v).toLocaleString("es-CO");
+// Valor de lo que hay en bodega: existencias por su costo promedio (el stock negativo no cuenta).
+const valorDe = (ing: Ingrediente) => Math.max(0, Number(ing.stockActual)) * (ing.costoUnidad ?? 0);
 
 const UNIDADES = [
   { valor: "unidad", etiqueta: "Unidades (botellas, latas, porciones)" },
@@ -136,9 +139,16 @@ export function InventarioTab({ onCambio }: { onCambio: (msg: string) => void })
   }
 
   const unidadForm = UNIDADES.find((u) => u.valor === form.unidad)?.valor ?? "unidad";
+  const valorTotal = ingredientes.reduce((acc, ing) => acc + valorDe(ing), 0);
+  const sinCosto = ingredientes.filter((ing) => !(ing.costoUnidad > 0)).length;
 
   return (
     <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Tile label="Valor del inventario" value={formatoCOP(valorTotal)} sub="existencias × costo promedio" />
+        <Tile label="Insumos sin costo" value={String(sinCosto)} sub={sinCosto > 0 ? "se les pone costo con una factura" : "todos tienen costo"} />
+      </div>
+
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <p className="text-xs opacity-60 max-w-2xl">
           Haz clic sobre el stock para corregirlo a un número exacto. Para compras reales a proveedores (con costo registrado), usa la pestaña <b>Facturas de proveedor</b> — ahí también
@@ -149,7 +159,7 @@ export function InventarioTab({ onCambio }: { onCambio: (msg: string) => void })
         </button>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-xs uppercase opacity-60">
             <tr>
@@ -157,7 +167,8 @@ export function InventarioTab({ onCambio }: { onCambio: (msg: string) => void })
               <th className="px-4 py-3">Stock</th>
               <th className="px-4 py-3">Mínimo</th>
               <th className="px-4 py-3">Estado</th>
-              <th className="px-4 py-3">Costo prom.</th>
+              <th className="px-4 py-3">Costo promedio</th>
+              <th className="px-4 py-3">Valor</th>
               <th className="px-4 py-3">Ubicación</th>
               <th className="px-4 py-3">Ingresó</th>
             </tr>
@@ -188,9 +199,10 @@ export function InventarioTab({ onCambio }: { onCambio: (msg: string) => void })
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-1 rounded-full ${e.clase}`}>{e.label}</span>
                   </td>
-                  <td className="px-4 py-3 opacity-70">
-                    {formatoCOP(ing.costoPromedio)}/{ing.unidadMedida}
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {ing.costoUnidad > 0 ? <span className="opacity-70">{textoCostoInsumo(ing.costoUnidad, ing.unidadMedida)}</span> : <span className="opacity-40">Sin costo</span>}
                   </td>
+                  <td className="px-4 py-3 font-medium whitespace-nowrap">{ing.costoUnidad > 0 ? formatoCOP(valorDe(ing)) : <span className="opacity-30">—</span>}</td>
                   <td className="px-4 py-3">
                     <input
                       key={ing.ubicacion ?? ""}
@@ -209,7 +221,7 @@ export function InventarioTab({ onCambio }: { onCambio: (msg: string) => void })
             })}
             {ingredientes.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-sm opacity-50">
+                <td colSpan={8} className="px-4 py-8 text-center text-sm opacity-50">
                   Tu inventario está vacío. Usa &quot;+ Agregar al inventario&quot; para crear el primero.
                 </td>
               </tr>

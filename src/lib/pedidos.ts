@@ -19,6 +19,76 @@ export class PedidoError extends Error {
 }
 
 /**
+ * Agrega los platos a un pedido ya creado (dentro de la transaccion): valida que existan y esten
+ * disponibles, congela precio y estacion, y descuenta el stock de la receta y de los adicionales
+ * que tengan un insumo ligado. Lo usan los pedidos de mesa y los de llevar / domicilio.
+ */
+export async function agregarItems(tx: Prisma.TransactionClient, restauranteId: string, pedidoId: string, items: ItemCarrito[]) {
+  for (const item of items) {
+    const producto = await tx.producto.findUnique({
+      where: { id: item.productoId },
+      include: { ingredientes: { include: { ingrediente: true } } },
+    });
+    if (!producto || producto.restauranteId !== restauranteId) {
+      throw new PedidoError("producto_no_existe", `Producto ${item.productoId} no existe`);
+    }
+    if (!disponibleEfectivo(producto)) {
+      throw new PedidoError("producto_agotado", `${producto.nombre} está agotado`);
+    }
+
+    const removidos = new Set(item.ingredientesRemovidos ?? []);
+    for (const pi of producto.ingredientes) {
+      if (removidos.has(pi.ingredienteId)) continue;
+      await tx.ingrediente.update({
+        where: { id: pi.ingredienteId },
+        data: { stockActual: { decrement: pi.cantidadUsada.toNumber() * item.cantidad } },
+      });
+    }
+
+    const itemPedido = await tx.itemPedido.create({
+      data: {
+        pedidoId,
+        productoId: producto.id,
+        cantidad: item.cantidad,
+        precioUnitario: producto.precio,
+        estacion: producto.estacion,
+        ingredientesRemovidos: item.ingredientesRemovidos ?? [],
+      },
+    });
+
+    for (const adicionalId of item.adicionales ?? []) {
+      const adicional = await tx.adicional.findUnique({ where: { id: adicionalId } });
+      if (!adicional || adicional.restauranteId !== restauranteId) {
+        throw new PedidoError("adicional_no_existe", `Adicional ${adicionalId} no existe`);
+      }
+      if (adicional.ingredienteId && adicional.cantidadUsada) {
+        await tx.ingrediente.update({
+          where: { id: adicional.ingredienteId },
+          data: { stockActual: { decrement: adicional.cantidadUsada.toNumber() * item.cantidad } },
+        });
+      }
+      await tx.itemPedidoAdicional.create({
+        data: { itemPedidoId: itemPedido.id, adicionalId: adicional.id, cantidad: item.cantidad, precioUnitario: adicional.precio },
+      });
+    }
+  }
+}
+
+/** Avisa a cocina (y a quien escuche) que hay un pedido nuevo: de una mesa, para llevar o a domicilio. */
+export function emitirPedidoCreado(
+  restauranteId: string,
+  pedido: { id: string; mesa: { numero: string } | null; items: { id: string; cantidad: number; estacion: string; producto: { nombre: string } }[] },
+  destino: string
+) {
+  emitirEvento(restauranteId, "pedido-creado", {
+    pedidoId: pedido.id,
+    mesaNumero: pedido.mesa?.numero ?? null,
+    destino,
+    items: pedido.items.map((it) => ({ id: it.id, nombreProducto: it.producto.nombre, cantidad: it.cantidad, estacion: it.estacion })),
+  });
+}
+
+/**
  * Crea un pedido completo: valida disponibilidad, congela precios/estacion,
  * descuenta stock de ingredientes (y de adicionales que tengan uno ligado),
  * y abre la mesa si estaba libre. Todo en una sola transaccion -- si algo
@@ -53,54 +123,7 @@ export async function crearPedido(
       data: { restauranteId, mesaId, cuentaId: cuenta.id, origen, meseroId, estado: "recibido" },
     });
 
-    for (const item of items) {
-      const producto = await tx.producto.findUnique({
-        where: { id: item.productoId },
-        include: { ingredientes: { include: { ingrediente: true } } },
-      });
-      if (!producto || producto.restauranteId !== restauranteId) {
-        throw new PedidoError("producto_no_existe", `Producto ${item.productoId} no existe`);
-      }
-      if (!disponibleEfectivo(producto)) {
-        throw new PedidoError("producto_agotado", `${producto.nombre} está agotado`);
-      }
-
-      const removidos = new Set(item.ingredientesRemovidos ?? []);
-      for (const pi of producto.ingredientes) {
-        if (removidos.has(pi.ingredienteId)) continue;
-        await tx.ingrediente.update({
-          where: { id: pi.ingredienteId },
-          data: { stockActual: { decrement: pi.cantidadUsada.toNumber() * item.cantidad } },
-        });
-      }
-
-      const itemPedido = await tx.itemPedido.create({
-        data: {
-          pedidoId: pedido.id,
-          productoId: producto.id,
-          cantidad: item.cantidad,
-          precioUnitario: producto.precio,
-          estacion: producto.estacion,
-          ingredientesRemovidos: item.ingredientesRemovidos ?? [],
-        },
-      });
-
-      for (const adicionalId of item.adicionales ?? []) {
-        const adicional = await tx.adicional.findUnique({ where: { id: adicionalId } });
-        if (!adicional || adicional.restauranteId !== restauranteId) {
-          throw new PedidoError("adicional_no_existe", `Adicional ${adicionalId} no existe`);
-        }
-        if (adicional.ingredienteId && adicional.cantidadUsada) {
-          await tx.ingrediente.update({
-            where: { id: adicional.ingredienteId },
-            data: { stockActual: { decrement: adicional.cantidadUsada.toNumber() * item.cantidad } },
-          });
-        }
-        await tx.itemPedidoAdicional.create({
-          data: { itemPedidoId: itemPedido.id, adicionalId: adicional.id, cantidad: item.cantidad, precioUnitario: adicional.precio },
-        });
-      }
-    }
+    await agregarItems(tx, restauranteId, pedido.id, items);
 
     // Un pedido nuevo en una mesa que ya estaba servida vuelve a dejarla "ocupada"
     // (hay algo por llevar otra vez).
@@ -119,16 +142,7 @@ export async function crearPedido(
     include: { mesa: true, items: { include: { producto: true, adicionales: { include: { adicional: true } } } } },
   });
 
-  emitirEvento(restauranteId, "pedido-creado", {
-    pedidoId: pedidoCompleto.id,
-    mesaNumero: pedidoCompleto.mesa.numero,
-    items: pedidoCompleto.items.map((it) => ({
-      id: it.id,
-      nombreProducto: it.producto.nombre,
-      cantidad: it.cantidad,
-      estacion: it.estacion,
-    })),
-  });
+  emitirPedidoCreado(restauranteId, pedidoCompleto, `Mesa ${pedidoCompleto.mesa?.numero ?? "?"}`);
 
   return pedidoCompleto;
 }
@@ -199,14 +213,15 @@ export async function entregarItems(restauranteId: string, pedidoId: string, ite
   if (faltan === 0) await prisma.pedido.update({ where: { id: pedidoId }, data: { estado: "entregado" } });
 
   // Solo una mesa "ocupada" pasa a servida: si ya pidieron la cuenta, sigue "cuenta solicitada".
+  // Los pedidos para llevar / domicilio no tienen mesa que actualizar.
   let mesaServida = false;
-  if ((await contarItemsPorEntregar(pedido.mesaId)) === 0) {
+  if (pedido.mesaId && (await contarItemsPorEntregar(pedido.mesaId)) === 0) {
     const { count } = await prisma.mesa.updateMany({ where: { id: pedido.mesaId, estado: "ocupada" }, data: { estado: "pedido_servido" } });
     mesaServida = count > 0;
   }
 
   emitirEvento(restauranteId, "pedido-entregado", { pedidoId, mesaId: pedido.mesaId, itemIds: ids });
-  if (mesaServida) emitirEvento(restauranteId, "mesa-actualizada", { mesaId: pedido.mesaId, numero: pedido.mesa.numero, estado: "pedido_servido" });
+  if (mesaServida && pedido.mesa) emitirEvento(restauranteId, "mesa-actualizada", { mesaId: pedido.mesa.id, numero: pedido.mesa.numero, estado: "pedido_servido" });
 
   return { entregados: ids.length, pedidoCompleto: faltan === 0, mesaServida };
 }

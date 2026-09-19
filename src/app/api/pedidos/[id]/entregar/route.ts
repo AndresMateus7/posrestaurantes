@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
+import { requireApiUser, apiErrorResponse, ApiAuthError } from "@/lib/api-auth";
 import { asegurarAccesoMesa } from "@/lib/acceso-mesas";
 import { entregarItems, PedidoError } from "@/lib/pedidos";
 
@@ -25,7 +25,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!pedido || pedido.restauranteId !== user.restauranteId) {
       return NextResponse.json({ error: "Pedido no existe" }, { status: 404 });
     }
-    await asegurarAccesoMesa(user.restauranteId, user, pedido.mesaId);
+    // Los pedidos para llevar / domicilio no tienen mesa: solo caja y administracion los entregan.
+    if (pedido.mesaId) await asegurarAccesoMesa(user.restauranteId, user, pedido.mesaId);
+    else if (user.rol === "mesero") throw new ApiAuthError(403, "Solo caja o administración entregan pedidos para llevar y domicilios");
 
     const resultado = await entregarItems(user.restauranteId, id, itemIds);
     return NextResponse.json({ ok: true, ...resultado });

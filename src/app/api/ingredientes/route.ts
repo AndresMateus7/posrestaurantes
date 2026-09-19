@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
 import { crearIngrediente } from "@/lib/inventario";
+import { sinCostos } from "@/lib/costos";
 
 export async function GET() {
   try {
@@ -20,8 +21,10 @@ export async function GET() {
     });
     const fechaPorIngrediente = new Map(ultimasEntradas.map((m) => [m.ingredienteId, m._max.creadoEn]));
 
+    // Los costos solo los ven administrador y caja (meseros y cocina no).
+    const veCostos = user.rol === "admin" || user.rol === "caja";
     return NextResponse.json(
-      ingredientes.map((ing) => ({ ...ing, ultimaEntrada: fechaPorIngrediente.get(ing.id) ?? null }))
+      ingredientes.map((ing) => ({ ...(veCostos ? ing : sinCostos(ing)), ultimaEntrada: fechaPorIngrediente.get(ing.id) ?? null }))
     );
   } catch (error) {
     return apiErrorResponse(error);

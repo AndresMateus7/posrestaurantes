@@ -492,8 +492,19 @@ export function MeseroPanel({
 
       {pedidoMesa && (
         <PedidoMesero
-          mesa={{ id: pedidoMesa.id, numero: pedidoMesa.numero }}
+          titulo={`Tomar pedido — Mesa ${pedidoMesa.numero}`}
+          tituloCarrito={`Pedido — Mesa ${pedidoMesa.numero}`}
           onCerrar={() => setPedidoMesa(null)}
+          onEnviar={async (items) => {
+            const res = await fetch("/api/pedidos", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mesaId: pedidoMesa.id, items }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) return { error: data.error ?? "No se pudo enviar el pedido", codigo: data.codigo };
+            return { mensaje: `Pedido enviado a cocina — Mesa ${pedidoMesa.numero} 👨‍🍳` };
+          }}
           onEnviado={(mensaje) => {
             setPedidoMesa(null);
             mostrarToast(mensaje);
