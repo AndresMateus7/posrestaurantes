@@ -9,7 +9,7 @@ import { FacturasProveedorTab } from "@/components/admin/FacturasProveedorTab";
 import { MeseroPanel } from "@/components/mesero/MeseroPanel";
 import { LlamadosLista, type LlamadoPendiente } from "@/components/mesero/LlamadosLista";
 import { AsignarMesero } from "@/components/mesero/AsignarMesero";
-import { PedidosExternosTab, type PedidoExterno } from "./PedidosExternosTab";
+import { PedidosExternosTab, type PedidoExterno, type SolicitudPendiente } from "./PedidosExternosTab";
 import { ICONO_SERVICIO, type TipoServicio } from "@/lib/servicio";
 
 type TurnoResumen = {
@@ -131,6 +131,8 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   const [vista, setVista] = useState<"caja" | "salon" | "externos" | "historial" | "facturas">("caja");
   // Pedidos para llevar y a domicilio en marcha (sin entregar todavia o sin cobrar).
   const [pedidosExternos, setPedidosExternos] = useState<PedidoExterno[]>([]);
+  // Pedidos que los clientes mandaron por el link y esperan que caja los acepte o rechace.
+  const [solicitudes, setSolicitudes] = useState<SolicitudPendiente[]>([]);
   // Cuenta que estoy cerrando yo: su aviso "cuenta cerrada" en vivo no es de "otra caja".
   const cierrePropioRef = useRef<string | null>(null);
   // Llamados de TODOS los meseros ("Llaman al mesero" / "Piden la cuenta"): caja los ve
@@ -184,17 +186,35 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     []
   );
 
+  const cargarSolicitudes = useCallback(
+    () =>
+      fetch("/api/solicitudes-pedido")
+        .then((r) => r.json())
+        .then((lista: unknown) => {
+          if (Array.isArray(lista)) setSolicitudes(lista as SolicitudPendiente[]);
+        }),
+    []
+  );
+
+  // Aceptar un pedido del link crea un pedido para llevar / domicilio: se recargan las dos listas.
+  const recargarDomicilios = useCallback(() => {
+    cargarExternos();
+    cargarSolicitudes();
+  }, [cargarExternos, cargarSolicitudes]);
+
   useEffect(() => {
     cargarTurno();
     cargarLlamados();
     cargarExternos();
-  }, [cargarTurno, cargarLlamados, cargarExternos]);
+    cargarSolicitudes();
+  }, [cargarTurno, cargarLlamados, cargarExternos, cargarSolicitudes]);
 
   // Red de seguridad del canal en vivo: llamados, cuentas y pedidos para llevar / domicilio se refrescan solos.
   useRefrescoPeriodico(() => {
     cargarLlamados();
     cargarCuentas();
     cargarExternos();
+    cargarSolicitudes();
   });
 
   useEffect(() => {
@@ -240,6 +260,15 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     // Cocina avanza un plato o se entrega un pedido: cambia el estado de los pedidos para llevar / domicilio.
     "item-actualizado": () => cargarExternos(),
     "pedido-entregado": () => cargarExternos(),
+    // Un cliente mando un pedido por el link: suena en cualquier vista, porque hay que responderlo pronto.
+    "solicitud-creada": (payload) => {
+      const p = payload as { tipo?: string; clienteNombre?: string };
+      cargarSolicitudes();
+      reproducirBeep();
+      mostrarToast(`🔔 Nuevo pedido por el link — ${p.tipo === "domicilio" ? "Domicilio" : "Para llevar"}${p.clienteNombre ? ` · ${p.clienteNombre}` : ""}`);
+    },
+    // Otra caja lo acepto o rechazo: sale de la lista.
+    "solicitud-actualizada": () => recargarDomicilios(),
     // Caja ve los llamados de todos los meseros. En "Mesas y pedidos" el propio panel avisa y
     // suena; en las demas vistas avisa Caja (lista + pitido + aviso).
     "llamado-creado": (payload) => {
@@ -542,6 +571,11 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                 {(id === "salon" || id === "caja") && llamados.length > 0 && (
                   <span className="ml-1.5 bg-red-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{llamados.length}</span>
                 )}
+                {id === "externos" && solicitudes.length > 0 && (
+                  <span className="ml-1.5 bg-orange-500 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold" title="Pedidos por confirmar">
+                    🔔 {solicitudes.length}
+                  </span>
+                )}
                 {id === "externos" && pedidosExternos.length > 0 && (
                   <span className="ml-1.5 bg-blue-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{pedidosExternos.length}</span>
                 )}
@@ -554,7 +588,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
       <main className="max-w-5xl mx-auto px-4 py-5 space-y-6">
         {vista === "salon" && <MeseroPanel embebido usuarioId={usuarioId} rol={rol} />}
         {vista === "externos" && (
-          <PedidosExternosTab pedidos={pedidosExternos} hayTurno={!!turno} onRecargar={cargarExternos} onCobrar={abrirDetalleCuenta} onCambio={mostrarToast} />
+          <PedidosExternosTab pedidos={pedidosExternos} solicitudes={solicitudes} hayTurno={!!turno} onRecargar={recargarDomicilios} onCobrar={abrirDetalleCuenta} onCambio={mostrarToast} />
         )}
         {vista === "historial" && <HistorialVentasTab />}
         {vista === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}

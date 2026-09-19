@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 type IngredienteMenu = { id: string; nombre: string };
 type AdicionalMenu = { id: string; nombre: string; precio: number };
-type ProductoMenu = {
+export type ProductoMenu = {
   id: string;
   categoriaId: string;
   nombre: string;
@@ -12,10 +12,11 @@ type ProductoMenu = {
   precio: number;
   imagenUrl: string | null;
   disponibleEfectivo: boolean;
+  alergenos?: { id: string; nombre: string; icono: string | null }[];
   ingredientes: IngredienteMenu[];
   adicionales: AdicionalMenu[];
 };
-type Categoria = { id: string; nombre: string; activo: boolean };
+export type Categoria = { id: string; nombre: string; activo: boolean };
 type LineaPedido = { producto: ProductoMenu; cantidad: number; ingredientesRemovidos: string[]; adicionales: string[] };
 type ModalProducto = { producto: ProductoMenu; cantidad: number; excluidos: Set<string>; adicionales: Set<string> };
 
@@ -28,6 +29,7 @@ type ProductoApi = {
   precio: number;
   imagenUrl: string | null;
   disponibleEfectivo: boolean;
+  alergenos?: { alergeno: { id: string; nombre: string; icono: string | null } }[];
   ingredientes: { removible: boolean; ingrediente: { id: string; nombre: string } }[];
   adicionales: { adicional: { id: string; nombre: string; precio: number; activo: boolean } }[];
 };
@@ -44,6 +46,7 @@ function aProductoMenu(p: ProductoApi): ProductoMenu {
     precio: p.precio,
     imagenUrl: p.imagenUrl,
     disponibleEfectivo: p.disponibleEfectivo,
+    alergenos: p.alergenos?.map((a) => a.alergeno),
     // Solo los ingredientes que el cliente puede quitar, igual que en el menu por QR.
     ingredientes: p.ingredientes.filter((pi) => pi.removible).map((pi) => ({ id: pi.ingrediente.id, nombre: pi.ingrediente.nombre })),
     adicionales: p.adicionales.filter((pa) => pa.adicional.activo).map((pa) => ({ id: pa.adicional.id, nombre: pa.adicional.nombre, precio: pa.adicional.precio })),
@@ -56,8 +59,8 @@ export type ItemEnvio = { productoId: string; cantidad: number; ingredientesRemo
 export type ResultadoEnvio = { mensaje: string } | { error: string; codigo?: string };
 
 /**
- * Pantalla para elegir platos del menu y mandarlos a cocina. La usan el mesero (pedido de una mesa) y
- * caja (pedido para llevar / domicilio): quien la usa decide a donde se envia con `onEnviar`.
+ * Pantalla para elegir platos del menu y mandarlos. La usan el mesero (pedido de una mesa), caja (pedido
+ * para llevar / domicilio) y el cliente en el link publico: quien la usa decide a donde se envia con `onEnviar`.
  */
 export function PedidoMesero({
   titulo,
@@ -65,16 +68,36 @@ export function PedidoMesero({
   onCerrar,
   onEnviar,
   onEnviado,
+  menu,
+  alAgotarse,
+  datosEnvio,
+  puedeEnviar = true,
+  textoEnviar = "Enviar a cocina",
+  cargoExtra,
 }: {
   titulo: string;
   tituloCarrito: string;
-  onCerrar: () => void;
+  /** Sin esto no hay flecha para volver (el link publico no tiene pantalla anterior). */
+  onCerrar?: () => void;
   onEnviar: (items: ItemEnvio[]) => Promise<ResultadoEnvio>;
   onEnviado: (mensaje: string) => void;
+  /** Menu ya cargado (link publico); sin esto se carga el del restaurante con la sesion de quien la usa. */
+  menu?: { categorias: Categoria[]; productos: ProductoMenu[] };
+  /** Se llama cuando el envio falla porque un plato se agoto, para que quien pasa `menu` lo recargue. */
+  alAgotarse?: () => void;
+  /** Contenido extra dentro del carrito, antes del total (los datos del cliente en el link publico). */
+  datosEnvio?: ReactNode;
+  puedeEnviar?: boolean;
+  textoEnviar?: string;
+  /** Un cargo que se suma al total del carrito, ej. el domicilio. */
+  cargoExtra?: { etiqueta: string; valor: number } | null;
 }) {
-  const [categorias, setCategorias] = useState<Categoria[]>([]);
-  const [productos, setProductos] = useState<ProductoMenu[]>([]);
-  const [categoriaActiva, setCategoriaActiva] = useState<string | null>(null);
+  const [categoriasApi, setCategoriasApi] = useState<Categoria[]>([]);
+  const [productosApi, setProductosApi] = useState<ProductoMenu[]>([]);
+  const categorias = menu ? menu.categorias : categoriasApi;
+  const productos = menu ? menu.productos : productosApi;
+  const [categoriaElegida, setCategoriaElegida] = useState<string | null>(null);
+  const categoriaActiva = categoriaElegida ?? categorias[0]?.id ?? null;
   const [busqueda, setBusqueda] = useState("");
   const [carrito, setCarrito] = useState<LineaPedido[]>([]);
   const [modal, setModal] = useState<ModalProducto | null>(null);
@@ -83,20 +106,17 @@ export function PedidoMesero({
   const [error, setError] = useState<string | null>(null);
 
   const cargarProductos = useCallback(
-    () => fetch("/api/productos").then((r) => r.json()).then((prods: ProductoApi[]) => setProductos(prods.map(aProductoMenu))),
+    () => fetch("/api/productos").then((r) => r.json()).then((prods: ProductoApi[]) => setProductosApi(prods.map(aProductoMenu))),
     []
   );
 
   useEffect(() => {
+    if (menu) return;
     fetch("/api/categorias")
       .then((r) => r.json())
-      .then((cats: Categoria[]) => {
-        const activas = cats.filter((c) => c.activo);
-        setCategorias(activas);
-        setCategoriaActiva(activas[0]?.id ?? null);
-      });
+      .then((cats: Categoria[]) => setCategoriasApi(cats.filter((c) => c.activo)));
     cargarProductos();
-  }, [cargarProductos]);
+  }, [menu, cargarProductos]);
 
   const buscando = busqueda.trim().length > 0;
   const productosVisibles = buscando
@@ -133,7 +153,10 @@ export function PedidoMesero({
         carrito.map((l) => ({ productoId: l.producto.id, cantidad: l.cantidad, ingredientesRemovidos: l.ingredientesRemovidos, adicionales: l.adicionales }))
       );
       if ("error" in resultado) {
-        if (resultado.codigo === "producto_agotado") cargarProductos();
+        if (resultado.codigo === "producto_agotado") {
+          if (menu) alAgotarse?.();
+          else cargarProductos();
+        }
         setError(resultado.error);
         return;
       }
@@ -147,12 +170,14 @@ export function PedidoMesero({
     <div className="fixed inset-0 z-40 flex flex-col" style={{ background: "var(--color-fondo)", fontFamily: "var(--fuente)" }}>
       <header className="bg-white shadow-sm shrink-0">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={onCerrar} aria-label="Volver" className="w-9 h-9 rounded-full grid place-items-center text-xl bg-black/5">
-            ←
-          </button>
+          {onCerrar && (
+            <button onClick={onCerrar} aria-label="Volver" className="w-9 h-9 rounded-full grid place-items-center text-xl bg-black/5">
+              ←
+            </button>
+          )}
           <div className="min-w-0">
             <h2 className="font-semibold leading-tight">{titulo}</h2>
-            <p className="text-xs opacity-60">Elige los platos y envíalos a cocina</p>
+            <p className="text-xs opacity-60">{menu ? "Elige lo que quieres pedir" : "Elige los platos y envíalos a cocina"}</p>
           </div>
         </div>
         <div className="max-w-3xl mx-auto px-4 pb-2">
@@ -168,7 +193,7 @@ export function PedidoMesero({
             {categorias.map((c) => (
               <button
                 key={c.id}
-                onClick={() => setCategoriaActiva(c.id)}
+                onClick={() => setCategoriaElegida(c.id)}
                 className="shrink-0 px-4 py-1.5 rounded-full border text-sm font-medium"
                 style={categoriaActiva === c.id ? { background: "var(--color-primario)", color: "#fff", borderColor: "var(--color-primario)" } : { borderColor: "#D1D5DB" }}
               >
@@ -188,6 +213,8 @@ export function PedidoMesero({
               </span>
               <div className="flex-1 min-w-0">
                 <p className="font-medium truncate">{p.nombre}</p>
+                {p.descripcion && menu && <p className="text-xs opacity-60 line-clamp-2">{p.descripcion}</p>}
+                {p.alergenos && p.alergenos.length > 0 && <p className="text-[11px] opacity-60 truncate">⚠️ {p.alergenos.map((a) => a.nombre).join(", ")}</p>}
                 <p className="text-sm font-semibold" style={{ color: "var(--color-primario)" }}>
                   {formatoCOP(p.precio)}
                 </p>
@@ -248,7 +275,7 @@ export function PedidoMesero({
 
             {modal.producto.ingredientes.length > 0 && (
               <div className="mt-4">
-                <p className="text-xs font-medium opacity-70 mb-1">Ingredientes (desmarca los que el cliente no quiere)</p>
+                <p className="text-xs font-medium opacity-70 mb-1">Ingredientes (desmarca los que {menu ? "no quieres" : "el cliente no quiere"})</p>
                 <div className="space-y-1.5">
                   {modal.producto.ingredientes.map((ing) => (
                     <label key={ing.id} className="flex items-center gap-2 text-sm">
@@ -351,15 +378,28 @@ export function PedidoMesero({
                   </div>
                 );
               })}
+              {carrito.length > 0 && datosEnvio}
             </div>
             <div className="p-5 border-t border-gray-100">
               {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+              {cargoExtra && (
+                <>
+                  <div className="flex justify-between text-sm opacity-70 mb-1">
+                    <span>Subtotal</span>
+                    <span>{formatoCOP(totalCarrito)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm opacity-70 mb-1">
+                    <span>{cargoExtra.etiqueta}</span>
+                    <span>{formatoCOP(cargoExtra.valor)}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between font-bold text-lg mb-4">
                 <span>Total</span>
-                <span>{formatoCOP(totalCarrito)}</span>
+                <span>{formatoCOP(totalCarrito + (cargoExtra?.valor ?? 0))}</span>
               </div>
-              <button onClick={enviar} disabled={carrito.length === 0 || enviando} className="w-full text-white rounded-xl py-3 font-semibold disabled:opacity-40" style={{ background: "var(--color-primario)" }}>
-                {enviando ? "Enviando..." : "Enviar a cocina"}
+              <button onClick={enviar} disabled={carrito.length === 0 || enviando || !puedeEnviar} className="w-full text-white rounded-xl py-3 font-semibold disabled:opacity-40" style={{ background: "var(--color-primario)" }}>
+                {enviando ? "Enviando..." : textoEnviar}
               </button>
             </div>
           </div>

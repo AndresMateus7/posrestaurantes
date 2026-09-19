@@ -29,6 +29,30 @@ export type PedidoExterno = {
   platos: { id: string; nombre: string; cantidad: number; estado: string; adicionales: string[] }[];
 };
 
+/** Pedido que un cliente mando por el link publico y espera que caja lo acepte. */
+export type SolicitudPendiente = {
+  id: string;
+  tipo: "llevar" | "domicilio";
+  clienteNombre: string;
+  clienteTelefono: string;
+  direccion: string | null;
+  notas: string | null;
+  pago: string | null;
+  pagaCon: number | null;
+  platos: {
+    productoId: string;
+    nombre: string;
+    cantidad: number;
+    precioUnitario: number;
+    ingredientesRemovidos: { id: string; nombre: string }[];
+    adicionales: { id: string; nombre: string; precio: number }[];
+  }[];
+  subtotal: number;
+  costoDomicilio: number;
+  total: number;
+  creadoEn: string;
+};
+
 type DatosForm = {
   tipo: "llevar" | "domicilio";
   clienteNombre: string;
@@ -57,14 +81,114 @@ function haceCuanto(iso: string, ahora: number) {
   return `hace ${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
+const ETIQUETA_PAGO: Record<string, string> = { efectivo: "Efectivo", transferencia: "Transferencia (Nequi, Daviplata…)", datafono: "Datáfono" };
+
+// Un pedido del link: caja lo revisa y lo acepta (va a cocina) o lo rechaza con un motivo que ve el cliente.
+function TarjetaSolicitud({ s, ahora, onCambio, onRecargar }: { s: SolicitudPendiente; ahora: number; onCambio: (msg: string) => void; onRecargar: () => void }) {
+  const [costo, setCosto] = useState(String(s.costoDomicilio));
+  const [ocupada, setOcupada] = useState(false);
+  const costoNum = costo.trim() === "" ? 0 : Number(costo);
+  const totalAhora = s.subtotal + (s.tipo === "domicilio" ? (Number.isFinite(costoNum) ? costoNum : 0) : 0);
+
+  async function responder(accion: "aceptar" | "rechazar") {
+    let cuerpo: Record<string, unknown> = {};
+    if (accion === "aceptar") {
+      if (s.tipo === "domicilio" && (!Number.isInteger(costoNum) || costoNum < 0)) {
+        onCambio("El valor del domicilio no es válido");
+        return;
+      }
+      cuerpo = s.tipo === "domicilio" ? { costoDomicilio: costoNum } : {};
+    } else {
+      const motivo = window.prompt("¿Por qué lo rechazas? (opcional — el cliente lo verá)");
+      if (motivo === null) return;
+      cuerpo = { motivo };
+    }
+
+    setOcupada(true);
+    try {
+      const res = await fetch(`/api/solicitudes-pedido/${s.id}/${accion}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) onCambio(data.error ?? "No se pudo responder el pedido");
+      else onCambio(accion === "aceptar" ? `${s.tipo === "domicilio" ? "Domicilio" : "Para llevar"} #${data.numero} aceptado y enviado a cocina 👨‍🍳` : "Pedido rechazado");
+      onRecargar();
+    } finally {
+      setOcupada(false);
+    }
+  }
+
+  return (
+    // Los textos los escribe el cliente: una palabra larguisima no debe ensanchar la pantalla de caja.
+    <article className="bg-orange-50 border-2 border-orange-300 rounded-2xl p-4 min-w-0 [overflow-wrap:anywhere]">
+      <div className="flex items-center gap-2">
+        <h3 className="font-bold">
+          {ICONO_SERVICIO[s.tipo]} {s.tipo === "domicilio" ? "Domicilio" : "Para llevar"} por el link
+        </h3>
+        <span className="ml-auto text-xs opacity-60">{haceCuanto(s.creadoEn, ahora)}</span>
+      </div>
+      <p className="text-sm mt-1.5">
+        👤 <b>{s.clienteNombre}</b> ·{" "}
+        <a href={`tel:${s.clienteTelefono}`} className="underline">
+          📞 {s.clienteTelefono}
+        </a>
+      </p>
+      {s.direccion && <p className="text-sm opacity-80 mt-0.5">📍 {s.direccion}</p>}
+      {(s.pago || s.notas) && (
+        <p className="text-xs bg-amber-100 text-amber-900 rounded-lg px-2 py-1 mt-1.5">
+          {s.pago && (
+            <>
+              💳 {ETIQUETA_PAGO[s.pago] ?? s.pago}
+              {s.pagaCon ? ` (paga con ${formatoCOP(s.pagaCon)})` : ""}
+            </>
+          )}
+          {s.pago && s.notas && " · "}
+          {s.notas && <>📝 {s.notas}</>}
+        </p>
+      )}
+
+      <ul className="mt-2 space-y-0.5 text-sm">
+        {s.platos.map((p, i) => (
+          <li key={i}>
+            {p.cantidad}× {p.nombre}
+            {p.ingredientesRemovidos.length > 0 && <span className="text-xs text-red-700"> (sin {p.ingredientesRemovidos.map((x) => x.nombre).join(", ")})</span>}
+            {p.adicionales.length > 0 && <span className="text-xs opacity-60"> (+ {p.adicionales.map((x) => x.nombre).join(", ")})</span>}
+          </li>
+        ))}
+      </ul>
+
+      <div className="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-orange-200 text-sm">
+        {s.tipo === "domicilio" ? (
+          <label className="flex items-center gap-1.5 text-xs">
+            Domicilio $
+            <input type="number" min={0} step={500} value={costo} onChange={(e) => setCosto(e.target.value)} className="w-20 border border-orange-300 rounded-lg px-2 py-1 text-sm bg-white text-right" />
+          </label>
+        ) : (
+          <span className="opacity-60 text-xs">Para recoger en el local</span>
+        )}
+        <span className="font-bold">{formatoCOP(totalAhora)}</span>
+      </div>
+
+      <div className="flex gap-2 mt-3">
+        <button onClick={() => responder("aceptar")} disabled={ocupada} className="flex-1 text-white text-sm font-semibold rounded-full px-3 py-2 disabled:opacity-40" style={{ background: "var(--color-primario)" }}>
+          Aceptar y enviar a cocina
+        </button>
+        <button onClick={() => responder("rechazar")} disabled={ocupada} className="text-sm font-semibold text-red-600 border border-red-300 rounded-full px-4 py-2 disabled:opacity-40">
+          Rechazar
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function PedidosExternosTab({
   pedidos,
+  solicitudes,
   hayTurno,
   onRecargar,
   onCobrar,
   onCambio,
 }: {
   pedidos: PedidoExterno[];
+  solicitudes: SolicitudPendiente[];
   hayTurno: boolean;
   onRecargar: () => void;
   onCobrar: (cuentaId: string) => void;
@@ -144,11 +268,25 @@ export function PedidosExternosTab({
         </div>
       </div>
 
-      {pedidos.length === 0 && (
+      {solicitudes.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="font-bold text-orange-700">🔔 Pedidos por confirmar ({solicitudes.length})</h2>
+          <p className="text-xs opacity-60 -mt-2">Los mandaron los clientes desde el link. No llegan a cocina hasta que los aceptes; si nadie los atiende en 3 horas se cancelan solos.</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {solicitudes.map((s) => (
+              <TarjetaSolicitud key={s.id} s={s} ahora={ahora} onCambio={onCambio} onRecargar={onRecargar} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {pedidos.length === 0 && solicitudes.length === 0 && (
         <div className="bg-white rounded-2xl shadow-sm p-8 text-center text-sm opacity-60">
           No hay pedidos para llevar ni domicilios en marcha. Usa los botones de arriba para sacar uno.
         </div>
       )}
+
+      {solicitudes.length > 0 && pedidos.length > 0 && <h2 className="font-bold pt-1">En marcha ({pedidos.length})</h2>}
 
       <div className="grid gap-3 md:grid-cols-2">
         {pedidos.map((p) => {
@@ -159,7 +297,7 @@ export function PedidosExternosTab({
           const puedeAnular = abierta && p.totalPagado === 0 && (p.estadoEntrega === "en_cocina" || p.estadoEntrega === "listo") && !p.despachadoEn;
           const trabajando = ocupado === p.id;
           return (
-            <article key={p.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+            <article key={p.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 min-w-0 [overflow-wrap:anywhere]">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-bold text-lg">
                   {ICONO_SERVICIO[p.tipo]} {p.etiqueta}

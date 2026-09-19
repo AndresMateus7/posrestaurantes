@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { emitirEvento } from "@/lib/realtime";
 import { recalcularCuenta } from "@/lib/cuentas";
@@ -36,8 +37,17 @@ const conPlatos = {
   pagos: { select: { monto: true } },
 } as const;
 
-/** Crea la cuenta (con el numero del dia y los datos del cliente) y su primer pedido, todo en una transaccion. */
-export async function crearPedidoExterno(restauranteId: string, datos: DatosPedidoExterno, items: ItemCarrito[]) {
+/**
+ * Crea la cuenta (con el numero del dia y los datos del cliente) y su primer pedido, todo en una transaccion.
+ * `origen` dice quien lo mando (caja por defecto; "qr_cliente" si viene del link publico) y `alCrear` corre
+ * dentro de la misma transaccion: si lanza un error no se crea nada (lo usa aceptar una solicitud del link).
+ */
+export async function crearPedidoExterno(
+  restauranteId: string,
+  datos: DatosPedidoExterno,
+  items: ItemCarrito[],
+  opciones: { origen?: "mostrador" | "qr_cliente"; alCrear?: (tx: Prisma.TransactionClient, cuentaId: string) => Promise<void> } = {}
+) {
   const nombre = datos.clienteNombre?.trim();
   if (!nombre) throw new PedidoExternoError("cliente_requerido", "Falta el nombre del cliente");
   if (datos.tipo === "domicilio" && !datos.direccion?.trim()) throw new PedidoExternoError("direccion_requerida", "Falta la dirección del domicilio");
@@ -70,8 +80,9 @@ export async function crearPedidoExterno(restauranteId: string, datos: DatosPedi
           estado: "abierta",
         },
       });
-      const pedido = await tx.pedido.create({ data: { restauranteId, cuentaId: cuenta.id, origen: "mostrador", estado: "recibido" } });
+      const pedido = await tx.pedido.create({ data: { restauranteId, cuentaId: cuenta.id, origen: opciones.origen ?? "mostrador", estado: "recibido" } });
       await agregarItems(tx, restauranteId, pedido.id, items);
+      await opciones.alCrear?.(tx, cuenta.id);
       return { cuentaId: cuenta.id, pedidoId: pedido.id };
     },
     { timeout: 20000 }

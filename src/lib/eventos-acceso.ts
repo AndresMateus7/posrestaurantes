@@ -24,6 +24,10 @@ export async function filtrarEventoParaMesero(usuarioId: string, evento: EventoT
     case "cuenta-actualizada":
     case "cuenta-cerrada":
       return null;
+    // Pedidos que los clientes mandan por el link (llevan nombre y telefono): solo caja y administracion.
+    case "solicitud-creada":
+    case "solicitud-actualizada":
+      return null;
     default:
       return evento;
   }

@@ -63,6 +63,13 @@ enum TipoServicio {
   domicilio
 }
 
+// Pedido que el cliente manda por el link publico: espera la respuesta de caja.
+enum EstadoSolicitud {
+  pendiente
+  aceptada
+  rechazada
+}
+
 enum EstadoCuenta {
   abierta
   dividida
@@ -125,6 +132,10 @@ model Restaurante {
   // en `contadorDia`). Se incrementa en una sola sentencia SQL, ver src/lib/pedidos-externos.ts.
   contadorPedidosExternos Int     @default(0) @map("contador_pedidos_externos")
   contadorDia             String? @map("contador_dia")
+  // Pedidos por el link publico (/pedir/<slug>): apagado hasta que el administrador lo active.
+  // `costoDomicilioBase` es el valor del domicilio que ve el cliente en el link.
+  pedidosWebActivos       Boolean @default(false) @map("pedidos_web_activos")
+  costoDomicilioBase      Int     @default(0) @map("costo_domicilio_base")
 
   tema          ConfiguracionTema?
   usuarios      Usuario[]
@@ -139,6 +150,7 @@ model Restaurante {
   turnosCaja    TurnoCaja[]
   llamados      LlamadoMesa[]
   facturasProveedor FacturaProveedor[]
+  solicitudesPedido SolicitudPedido[]
 
   @@map("restaurantes")
 }
@@ -525,6 +537,8 @@ model Cuenta {
   pedidos       Pedido[]
   subCuentas    SubCuenta[]
   pagos         Pago[]
+  // Si el pedido llego por el link publico, la solicitud del cliente que caja acepto.
+  solicitud     SolicitudPedido?
 
   @@index([restauranteId, estado])
   @@index([restauranteId, tipo])
@@ -642,4 +656,39 @@ model LlamadoMesa {
 
   @@index([restauranteId, atendido])
   @@map("llamados_mesa")
+}
+
+// =====================================================================
+// 10. Pedidos por el link publico (para llevar / domicilio)
+// =====================================================================
+
+// El cliente arma su pedido en /pedir/<slug>; queda aqui, sin tocar cocina ni inventario, hasta que
+// caja lo acepta (ahi se crea el pedido de verdad, ver src/lib/solicitudes.ts) o lo rechaza.
+model SolicitudPedido {
+  id              String   @id @default(uuid())
+  restauranteId   String   @map("restaurante_id")
+  restaurante     Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  tipo            TipoServicio
+  clienteNombre   String   @map("cliente_nombre")
+  clienteTelefono String   @map("cliente_telefono")
+  direccion       String?
+  notas           String?
+  // Como piensa pagar (efectivo | transferencia | datafono) y, si es efectivo, con cuanto.
+  pago            String?
+  pagaCon         Int?     @map("paga_con")
+  // Platos con nombre y precio del momento: [{ productoId, nombre, cantidad, precioUnitario,
+  // ingredientesRemovidos: [{ id, nombre }], adicionales: [{ id, nombre, precio }] }]
+  items           Json
+  subtotal        Int
+  costoDomicilio  Int      @default(0) @map("costo_domicilio")
+  total           Int
+  estado          EstadoSolicitud @default(pendiente)
+  motivoRechazo   String?  @map("motivo_rechazo")
+  cuentaId        String?  @unique @map("cuenta_id")
+  cuenta          Cuenta?  @relation(fields: [cuentaId], references: [id], onDelete: SetNull)
+  creadoEn        DateTime @default(now()) @map("creado_en")
+  respondidoEn    DateTime? @map("respondido_en")
+
+  @@index([restauranteId, estado])
+  @@map("solicitudes_pedido")
 }
