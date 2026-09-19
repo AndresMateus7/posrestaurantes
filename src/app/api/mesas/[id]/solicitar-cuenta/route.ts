@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireApiUser, apiErrorResponse } from "@/lib/api-auth";
+import { asegurarAccesoMesa } from "@/lib/acceso-mesas";
 import { crearLlamado } from "@/lib/llamados";
 
 // Version autenticada de POST /api/public/mesas/:token/solicitar-cuenta:
@@ -8,6 +9,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     const user = await requireApiUser("mesero", "admin", "caja");
     const { id } = await params;
+    await asegurarAccesoMesa(user.restauranteId, user, id);
     const llamado = await crearLlamado(user.restauranteId, id, "solicitar_cuenta");
     return NextResponse.json(llamado);
   } catch (error) {

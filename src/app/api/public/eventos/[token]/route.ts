@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { suscribirse } from "@/lib/realtime";
+import { filtrarEventoPublico } from "@/lib/eventos-acceso";
 
 // Version publica de /api/eventos: el cliente final no tiene sesion, se
 // autoriza solo con su qr_token (igual que el resto de /api/public/*).
@@ -17,7 +18,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      const enviar = (evento: { tipo: string; payload: unknown }) => {
+      // Solo pasan los eventos que el menu necesita para refrescarse, y sin
+      // contenido: este canal no tiene sesion, asi que nunca debe filtrar
+      // pedidos ni llamados de otras mesas.
+      const enviar = (original: { tipo: string; payload: unknown }) => {
+        const evento = filtrarEventoPublico(original);
+        if (!evento) return;
         controller.enqueue(encoder.encode(`event: ${evento.tipo}\ndata: ${JSON.stringify(evento.payload)}\n\n`));
       };
       controller.enqueue(encoder.encode(": conectado\n\n"));

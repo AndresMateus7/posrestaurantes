@@ -153,7 +153,9 @@ export async function cerrarCuenta(restauranteId: string, cuentaId: string) {
 
   await prisma.$transaction([
     prisma.cuenta.update({ where: { id: cuentaId }, data: { estado: "pagada", cerradoEn: new Date() } }),
-    prisma.mesa.update({ where: { id: cuenta.mesaId }, data: { estado: "libre" } }),
+    // Al liberar la mesa tambien se libera al mesero: la siguiente ocupacion
+    // la asigna quien la abra (ver src/lib/mesas.ts).
+    prisma.mesa.update({ where: { id: cuenta.mesaId }, data: { estado: "libre", meseroId: null } }),
   ]);
 
   emitirEvento(restauranteId, "mesa-actualizada", { mesaId: cuenta.mesaId, estado: "libre" });

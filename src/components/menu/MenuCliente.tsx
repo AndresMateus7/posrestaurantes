@@ -40,6 +40,9 @@ export function MenuCliente({ token }: { token: string }) {
   const [carritoAbierto, setCarritoAbierto] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [llamarAbierto, setLlamarAbierto] = useState(false);
+  const [comentarioLlamado, setComentarioLlamado] = useState("");
+  const [llamando, setLlamando] = useState(false);
   const toastTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const cargar = useCallback(() => {
@@ -125,9 +128,29 @@ export function MenuCliente({ token }: { token: string }) {
     }
   }
 
-  async function accionRapida(ruta: "llamar-mesero" | "solicitar-cuenta", mensaje: string) {
-    await fetch(`/api/public/mesas/${token}/${ruta}`, { method: "POST" });
-    mostrarToast(mensaje);
+  async function solicitarCuenta() {
+    await fetch(`/api/public/mesas/${token}/solicitar-cuenta`, { method: "POST" });
+    mostrarToast("Cuenta solicitada 🧾");
+  }
+
+  async function llamarMesero() {
+    setLlamando(true);
+    try {
+      const res = await fetch(`/api/public/mesas/${token}/llamar-mesero`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comentario: comentarioLlamado.trim() || undefined }),
+      });
+      if (!res.ok) {
+        mostrarToast("No se pudo avisar al mesero, intenta de nuevo");
+        return;
+      }
+      setLlamarAbierto(false);
+      setComentarioLlamado("");
+      mostrarToast("Mesero avisado, ya te atiende 🛎️");
+    } finally {
+      setLlamando(false);
+    }
   }
 
   if (!data) return null;
@@ -166,8 +189,8 @@ export function MenuCliente({ token }: { token: string }) {
               <span className="font-bold text-lg leading-none" style={{ color: "var(--color-primario)" }}>{data.mesa.numero}</span>
             </div>
             <div className="flex gap-1.5">
-              <button onClick={() => accionRapida("llamar-mesero", "Mesero avisado, ya te atiende 🛎️")} className="w-8 h-8 rounded-full grid place-items-center text-base bg-black/5 active:scale-90 transition">🛎️</button>
-              <button onClick={() => accionRapida("solicitar-cuenta", "Cuenta solicitada 🧾")} className="w-8 h-8 rounded-full grid place-items-center text-base bg-black/5 active:scale-90 transition">🧾</button>
+              <button onClick={() => setLlamarAbierto(true)} aria-label="Llamar al mesero" className="w-8 h-8 rounded-full grid place-items-center text-base bg-black/5 active:scale-90 transition">🛎️</button>
+              <button onClick={solicitarCuenta} aria-label="Pedir la cuenta" className="w-8 h-8 rounded-full grid place-items-center text-base bg-black/5 active:scale-90 transition">🧾</button>
             </div>
           </div>
         </div>
@@ -362,6 +385,38 @@ export function MenuCliente({ token }: { token: string }) {
                 style={{ background: "var(--color-primario)" }}
               >
                 {enviando ? "Enviando..." : data.puedeEnviarPedido ? "Enviar pedido a cocina" : "Esperando a que el mesero abra la mesa..."}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {llamarAbierto && (
+        <div className="fixed inset-0 z-40">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setLlamarAbierto(false)} />
+          <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5" style={{ background: "#fff" }}>
+            <h3 className="text-lg font-semibold">Llamar al mesero 🛎️</h3>
+            <p className="text-sm opacity-60 mt-1">Mesa {data.mesa.numero}. Si necesitas algo en particular, cuéntanos (opcional).</p>
+            <textarea
+              value={comentarioLlamado}
+              onChange={(e) => setComentarioLlamado(e.target.value)}
+              maxLength={300}
+              rows={3}
+              placeholder="Ej. Más servilletas, otra salsa, cambiar de mesa…"
+              className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm mt-3 resize-none"
+            />
+            <p className="text-[11px] opacity-40 text-right">{comentarioLlamado.length}/300</p>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button onClick={() => setLlamarAbierto(false)} className="border border-gray-300 rounded-xl py-3 text-sm font-semibold">
+                Cancelar
+              </button>
+              <button
+                onClick={llamarMesero}
+                disabled={llamando}
+                className="text-white rounded-xl py-3 text-sm font-semibold disabled:opacity-50"
+                style={{ background: "var(--color-primario)" }}
+              >
+                {llamando ? "Avisando..." : "Llamar al mesero"}
               </button>
             </div>
           </div>

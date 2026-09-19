@@ -598,6 +598,8 @@ model LlamadoMesa {
   mesaId        String   @map("mesa_id")
   mesa          Mesa     @relation(fields: [mesaId], references: [id], onDelete: Cascade)
   tipo          TipoLlamado
+  // Mensaje opcional del cliente al llamar al mesero ("mas servilletas", "otra salsa"...).
+  comentario    String?
   atendido      Boolean  @default(false)
   creadoEn      DateTime @default(now()) @map("creado_en")
   atendidoEn    DateTime? @map("atendido_en")

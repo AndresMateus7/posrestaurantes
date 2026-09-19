@@ -24,7 +24,8 @@ export async function GET() {
   try {
     const user = await requireApiUser();
     const plano = await obtenerOCrearPlano(user.restauranteId);
-    const mesas = await prisma.mesa.findMany({ where: { planoId: plano.id } });
+    // `mesero` (nombre) permite mostrar quien atiende cada mesa en el mapa.
+    const mesas = await prisma.mesa.findMany({ where: { planoId: plano.id }, include: { mesero: { select: { nombre: true } } } });
     return NextResponse.json({ plano, mesas });
   } catch (error) {
     return apiErrorResponse(error);

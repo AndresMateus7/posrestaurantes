@@ -6,7 +6,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   try {
     const user = await requireApiUser("mesero", "admin", "caja");
     const { id } = await params;
-    const mesa = await abrirMesa(user.restauranteId, id, user.usuarioId);
+    const mesa = await abrirMesa(user.restauranteId, id, user);
     return NextResponse.json(mesa);
   } catch (error) {
     return apiErrorResponse(error);

@@ -2,9 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
+import { PedidoMesero } from "./PedidoMesero";
 
-type Mesa = { id: string; elementoId: string; numero: string; capacidad: number; estado: string };
-type Llamado = { id: string; tipo: "llamar_mesero" | "solicitar_cuenta"; mesaNumero: string; creadoEn: string };
+type Mesa = {
+  id: string;
+  elementoId: string;
+  numero: string;
+  capacidad: number;
+  estado: string;
+  meseroId: string | null;
+  mesero: { nombre: string } | null;
+};
+type Llamado = { id: string; tipo: "llamar_mesero" | "solicitar_cuenta"; mesaNumero: string; comentario: string | null; creadoEn: string };
 type ItemCuenta = { id: string; nombreProducto: string; cantidad: number; estado: string; pedidoId: string; adicionales: string[] };
 type TipoElemento = "mesa" | "barra" | "pared" | "caja" | "cocina" | "decoracion";
 type ElementoPlano = { id: string; tipo: TipoElemento; forma?: "cuadrada" | "redonda" | "rectangular"; x: number; y: number; ancho: number; alto: number; rotacion: number };
@@ -21,14 +30,22 @@ const ESTILO_ESTADO: Record<string, { label: string; clase: string }> = {
 const ETIQUETA_ITEM: Record<string, string> = { pendiente: "Pendiente", en_preparacion: "En preparación", listo: "Listo", entregado: "Entregado" };
 const formatoCOP = (v: number) => "$" + v.toLocaleString("es-CO");
 
-export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: string; rotaQr: boolean }) {
+const estaAbierta = (m: Mesa) => m.estado !== "libre" && m.estado !== "reservada";
+// Un mesero no ve el detalle de las mesas que atiende otro mesero; caja y admin ven todo.
+const atiendeOtro = (m: Mesa, usuarioId: string, rol: string) => rol === "mesero" && estaAbierta(m) && m.meseroId !== null && m.meseroId !== usuarioId;
+
+export function MeseroPanel({ restauranteNombre, rotaQr, usuarioId, rol }: { restauranteNombre: string; rotaQr: boolean; usuarioId: string; rol: string }) {
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [layout, setLayout] = useState<ElementoPlano[]>([]);
   const [llamados, setLlamados] = useState<Llamado[]>([]);
   const [nuevosIds, setNuevosIds] = useState<Set<string>>(new Set());
-  const [mesaAbierta, setMesaAbierta] = useState<Mesa | null>(null);
+  const [mesaAbiertaId, setMesaAbiertaId] = useState<string | null>(null);
+  const [pedidoMesa, setPedidoMesa] = useState<Mesa | null>(null);
   const [cuenta, setCuenta] = useState<{ total: number; items: ItemCuenta[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  const esMesero = rol === "mesero";
+  const mesaAbierta = mesas.find((m) => m.id === mesaAbiertaId) ?? null;
 
   const cargarMesas = useCallback(
     () =>
@@ -50,7 +67,7 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
 
   function mostrarToast(msg: string) {
     setToast(msg);
-    setTimeout(() => setToast(null), 2200);
+    setTimeout(() => setToast(null), 2600);
   }
 
   function reproducirBeep() {
@@ -74,13 +91,21 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
   useEventos({
     "llamado-creado": (payload) => {
       const l = payload as Llamado;
-      setLlamados((prev) => [l, ...prev]);
+      setLlamados((prev) => (prev.some((x) => x.id === l.id) ? prev : [l, ...prev]));
       setNuevosIds((prev) => new Set(prev).add(l.id));
       setTimeout(() => setNuevosIds((prev) => { const s = new Set(prev); s.delete(l.id); return s; }), 3000);
       reproducirBeep();
       mostrarToast(`${l.tipo === "llamar_mesero" ? "🛎️ Llaman al mesero" : "🧾 Piden la cuenta"} — Mesa ${l.mesaNumero}`);
     },
-    "mesa-actualizada": () => cargarMesas(),
+    "llamado-atendido": (payload) => {
+      const { id } = payload as { id: string };
+      setLlamados((prev) => prev.filter((l) => l.id !== id));
+    },
+    // Cuando alguien toma una mesa, los llamados de esa mesa dejan de ser visibles para los demas meseros.
+    "mesa-actualizada": () => {
+      cargarMesas();
+      cargarLlamados();
+    },
     "pedido-creado": () => cargarMesas(),
     "item-actualizado": () => cargarMesas(),
     "pedido-entregado": () => cargarMesas(),
@@ -88,38 +113,70 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
   });
 
   useEffect(() => {
-    if (mesaAbierta && mesaAbierta.estado !== "libre" && mesaAbierta.estado !== "reservada") {
+    if (mesaAbierta && estaAbierta(mesaAbierta) && !atiendeOtro(mesaAbierta, usuarioId, rol)) {
       cargarCuenta(mesaAbierta.id);
     }
-  }, [mesaAbierta, cargarCuenta]);
+  }, [mesaAbierta, usuarioId, rol, cargarCuenta]);
+
+  function abrirModalMesa(mesa: Mesa) {
+    setCuenta(null);
+    setMesaAbiertaId(mesa.id);
+  }
+
+  // Ejecuta una accion contra la API; si falla (ej. la mesa la tomo otro mesero
+  // mientras tanto) avisa y refresca el mapa en vez de dejar la pantalla desactualizada.
+  async function accion(url: string, init?: RequestInit): Promise<boolean> {
+    const res = await fetch(url, init);
+    if (res.ok) return true;
+    const data = await res.json().catch(() => ({}));
+    mostrarToast(data.error ?? "No se pudo completar la acción");
+    await Promise.all([cargarMesas(), cargarLlamados()]);
+    return false;
+  }
 
   async function atenderLlamado(id: string) {
-    await fetch(`/api/llamados/${id}`, { method: "PATCH" });
+    if (!(await accion(`/api/llamados/${id}`, { method: "PATCH" }))) return;
     setLlamados((prev) => prev.filter((l) => l.id !== id));
     mostrarToast("Llamado atendido ✅");
   }
 
-  async function abrirMesa(mesa: Mesa) {
-    await fetch(`/api/mesas/${mesa.id}/abrir`, { method: "POST" });
+  async function abrirMesa(mesa: Mesa, tomarPedido: boolean) {
+    if (!(await accion(`/api/mesas/${mesa.id}/abrir`, { method: "POST" }))) return;
     await cargarMesas();
-    setMesaAbierta(null);
-    mostrarToast(`Mesa ${mesa.numero} abierta 🔓`);
+    setMesaAbiertaId(null);
+    if (tomarPedido) setPedidoMesa(mesa);
+    else mostrarToast(`Mesa ${mesa.numero} abierta 🔓`);
+  }
+
+  async function tomarMesa(mesa: Mesa) {
+    if (!(await accion(`/api/mesas/${mesa.id}/abrir`, { method: "POST" }))) return;
+    await Promise.all([cargarMesas(), cargarLlamados()]);
+    mostrarToast(`Mesa ${mesa.numero} quedó a tu nombre`);
   }
 
   async function marcarEntregado(mesa: Mesa) {
     if (!cuenta) return;
-    const pedidosListos = new Set(cuenta.items.filter((it) => it.estado === "listo").map((it) => it.pedidoId));
-    await Promise.all([...pedidosListos].map((pedidoId) => fetch(`/api/pedidos/${pedidoId}/entregar`, { method: "POST" })));
+    const pedidosListos = [...new Set(cuenta.items.filter((it) => it.estado === "listo").map((it) => it.pedidoId))];
+    for (const pedidoId of pedidosListos) {
+      if (!(await accion(`/api/pedidos/${pedidoId}/entregar`, { method: "POST" }))) return;
+    }
     await cargarMesas();
-    setMesaAbierta(null);
+    setMesaAbiertaId(null);
     mostrarToast(`Pedido de Mesa ${mesa.numero} marcado entregado`);
   }
 
   async function solicitarCuenta(mesa: Mesa) {
-    await fetch(`/api/mesas/${mesa.id}/solicitar-cuenta`, { method: "POST" });
+    if (!(await accion(`/api/mesas/${mesa.id}/solicitar-cuenta`, { method: "POST" }))) return;
     await cargarMesas();
-    setMesaAbierta(null);
+    setMesaAbiertaId(null);
     mostrarToast(`Cuenta solicitada para Mesa ${mesa.numero}`);
+  }
+
+  function etiquetaMesero(mesa: Mesa) {
+    if (!estaAbierta(mesa)) return "";
+    if (mesa.meseroId === null) return "Sin mesero";
+    if (mesa.meseroId === usuarioId) return "Mía";
+    return mesa.mesero?.nombre.split(" ")[0] ?? "Otro";
   }
 
   return (
@@ -149,12 +206,13 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
                 className={`flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-4 py-2.5 shadow-sm ${nuevosIds.has(l.id) ? "animate-pulse" : ""}`}
               >
                 <span className="text-xl">{l.tipo === "llamar_mesero" ? "🛎️" : "🧾"}</span>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">
                     {l.tipo === "llamar_mesero" ? "Llaman al mesero" : "Piden la cuenta"} — Mesa {l.mesaNumero}
                   </p>
+                  {l.comentario && <p className="text-sm mt-0.5 opacity-80 break-words">&ldquo;{l.comentario}&rdquo;</p>}
                 </div>
-                <button onClick={() => atenderLlamado(l.id)} className="text-white text-xs font-semibold rounded-full px-3 py-1.5" style={{ background: "var(--color-primario)" }}>
+                <button onClick={() => atenderLlamado(l.id)} className="text-white text-xs font-semibold rounded-full px-3 py-1.5 shrink-0" style={{ background: "var(--color-primario)" }}>
                   Atender
                 </button>
               </div>
@@ -181,15 +239,26 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
                 if (f.tipo === "mesa") {
                   const mesa = mesas.find((m) => m.elementoId === f.id);
                   const estilo = ESTILO_ESTADO[mesa?.estado ?? "libre"] ?? ESTILO_ESTADO.libre;
+                  const esMia = !!mesa && estaAbierta(mesa) && mesa.meseroId === usuarioId;
+                  const deOtro = !!mesa && atiendeOtro(mesa, usuarioId, rol);
                   return (
                     <button
                       key={f.id}
-                      onClick={() => mesa && setMesaAbierta(mesa)}
-                      className={`absolute flex flex-col items-center justify-center border-2 rounded-lg ${estilo.clase}`}
-                      style={{ left: f.x, top: f.y, width: f.ancho, height: f.alto, borderRadius: f.forma === "redonda" ? 9999 : 10, transform: `rotate(${f.rotacion ?? 0}deg)` }}
+                      onClick={() => mesa && abrirModalMesa(mesa)}
+                      className={`absolute flex flex-col items-center justify-center border-2 rounded-lg ${estilo.clase} ${deOtro ? "opacity-50" : ""}`}
+                      style={{
+                        left: f.x,
+                        top: f.y,
+                        width: f.ancho,
+                        height: f.alto,
+                        borderRadius: f.forma === "redonda" ? 9999 : 10,
+                        transform: `rotate(${f.rotacion ?? 0}deg)`,
+                        boxShadow: esMia ? "0 0 0 3px var(--color-primario)" : undefined,
+                      }}
                     >
                       <span className="font-bold text-lg leading-none">{mesa?.numero ?? "?"}</span>
                       <span className="text-[10px] opacity-70">{mesa ? `${mesa.capacidad}p` : ""}</span>
+                      {mesa && estaAbierta(mesa) && <span className="text-[9px] font-semibold leading-none mt-0.5 max-w-full truncate px-1">{etiquetaMesero(mesa)}</span>}
                     </button>
                   );
                 }
@@ -209,21 +278,47 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
       </main>
 
       {mesaAbierta && (
-        <div className="fixed inset-0 z-40">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setMesaAbierta(null)} />
+        <div className="fixed inset-0 z-30">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setMesaAbiertaId(null)} />
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-md max-h-[85vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-5">
-            {mesaAbierta.estado === "libre" || mesaAbierta.estado === "reservada" ? (
+            {!estaAbierta(mesaAbierta) ? (
               <>
                 <h3 className="text-lg font-semibold">Mesa {mesaAbierta.numero}</h3>
-                <p className="text-sm opacity-60 mt-1">{mesaAbierta.capacidad} puestos · {ESTILO_ESTADO[mesaAbierta.estado].label}</p>
-                <button onClick={() => abrirMesa(mesaAbierta)} className="w-full text-white rounded-xl py-3 font-semibold mt-4" style={{ background: "var(--color-primario)" }}>
-                  Abrir mesa {mesaAbierta.numero}
+                <p className="text-sm opacity-60 mt-1">
+                  {mesaAbierta.capacidad} puestos · {ESTILO_ESTADO[mesaAbierta.estado].label}
+                </p>
+                <button onClick={() => abrirMesa(mesaAbierta, true)} className="w-full text-white rounded-xl py-3 font-semibold mt-4" style={{ background: "var(--color-primario)" }}>
+                  Abrir mesa y tomar pedido
+                </button>
+                <button onClick={() => abrirMesa(mesaAbierta, false)} className="w-full border border-gray-300 rounded-xl py-3 text-sm font-semibold mt-2">
+                  Solo abrir mesa {mesaAbierta.numero}
+                </button>
+              </>
+            ) : atiendeOtro(mesaAbierta, usuarioId, rol) ? (
+              <>
+                <h3 className="text-lg font-semibold">Mesa {mesaAbierta.numero}</h3>
+                <p className="text-sm opacity-60 mt-1">{ESTILO_ESTADO[mesaAbierta.estado].label}</p>
+                <div className="mt-4 bg-gray-50 rounded-xl p-4 text-sm">
+                  <p className="font-medium">🔒 La atiende {mesaAbierta.mesero?.nombre ?? "otro mesero"}</p>
+                  <p className="opacity-60 mt-1">Solo el mesero asignado, caja y administración pueden ver o modificar los pedidos de esta mesa.</p>
+                </div>
+              </>
+            ) : esMesero && mesaAbierta.meseroId === null ? (
+              <>
+                <h3 className="text-lg font-semibold">Mesa {mesaAbierta.numero}</h3>
+                <p className="text-sm opacity-60 mt-1">{ESTILO_ESTADO[mesaAbierta.estado].label}</p>
+                <div className="mt-4 bg-amber-50 rounded-xl p-4 text-sm text-amber-900">Ningún mesero atiende esta mesa todavía. Si la tomas, queda a tu nombre y nadie más podrá ver sus pedidos.</div>
+                <button onClick={() => tomarMesa(mesaAbierta)} className="w-full text-white rounded-xl py-3 font-semibold mt-4" style={{ background: "var(--color-primario)" }}>
+                  Tomar esta mesa
                 </button>
               </>
             ) : (
               <>
                 <h3 className="text-lg font-semibold">Mesa {mesaAbierta.numero}</h3>
-                <p className="text-sm opacity-60 mt-1">{ESTILO_ESTADO[mesaAbierta.estado].label}</p>
+                <p className="text-sm opacity-60 mt-1">
+                  {ESTILO_ESTADO[mesaAbierta.estado].label}
+                  {!esMesero && ` · Atiende: ${mesaAbierta.mesero?.nombre ?? "sin mesero"}`}
+                </p>
                 <div className="space-y-2 mt-4">
                   {cuenta?.items.map((it) => (
                     <div key={it.id} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2">
@@ -242,9 +337,19 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
                   <span>Total corriente</span>
                   <span>{formatoCOP(cuenta?.total ?? 0)}</span>
                 </div>
-                <div className={`grid ${mesaAbierta.estado === "cuenta_solicitada" ? "grid-cols-1" : "grid-cols-2"} gap-2 mt-4`}>
+                <button
+                  onClick={() => {
+                    setPedidoMesa(mesaAbierta);
+                    setMesaAbiertaId(null);
+                  }}
+                  className="w-full text-white rounded-xl py-3 font-semibold mt-4"
+                  style={{ background: "var(--color-primario)" }}
+                >
+                  Tomar pedido
+                </button>
+                <div className={`grid ${mesaAbierta.estado === "cuenta_solicitada" || !cuenta?.items.some((it) => it.estado === "listo") ? "grid-cols-1" : "grid-cols-2"} gap-2 mt-2`}>
                   {cuenta?.items.some((it) => it.estado === "listo") && (
-                    <button onClick={() => marcarEntregado(mesaAbierta)} className="text-white rounded-xl py-2.5 text-sm font-semibold" style={{ background: "var(--color-primario)" }}>
+                    <button onClick={() => marcarEntregado(mesaAbierta)} className="border border-gray-300 rounded-xl py-2.5 text-sm font-semibold">
                       Marcar entregado
                     </button>
                   )}
@@ -260,6 +365,18 @@ export function MeseroPanel({ restauranteNombre, rotaQr }: { restauranteNombre: 
             )}
           </div>
         </div>
+      )}
+
+      {pedidoMesa && (
+        <PedidoMesero
+          mesa={{ id: pedidoMesa.id, numero: pedidoMesa.numero }}
+          onCerrar={() => setPedidoMesa(null)}
+          onEnviado={(mensaje) => {
+            setPedidoMesa(null);
+            mostrarToast(mensaje);
+            cargarMesas();
+          }}
+        />
       )}
 
       {toast && (

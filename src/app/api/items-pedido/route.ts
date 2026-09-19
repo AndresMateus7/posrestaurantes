@@ -8,7 +8,9 @@ import type { EstacionCocina } from "@prisma/client";
 // ingredientes removidos y adicionales para pintar la tarjeta directo.
 export async function GET(req: Request) {
   try {
-    const user = await requireApiUser();
+    // Misma lista de roles que la pagina /cocina: un mesero no debe poder leer
+    // los pedidos de las mesas de otros meseros por esta via.
+    const user = await requireApiUser("cocina", "admin", "caja");
     const estacion = new URL(req.url).searchParams.get("estacion") as EstacionCocina | null;
 
     const items = await prisma.itemPedido.findMany({
