@@ -1,7 +1,25 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { emitirEvento } from "@/lib/realtime";
 import { ApiAuthError } from "@/lib/api-auth";
 import type { Solicitante } from "@/lib/acceso-mesas";
+
+/** Pedidos de la cuenta en curso de la mesa: los de una cuenta abierta/dividida y los sueltos (sin cuenta). */
+const pedidosEnCurso = (mesaId: string): Prisma.PedidoWhereInput => ({
+  mesaId,
+  estado: { not: "cancelado" },
+  OR: [{ cuenta: { estado: { in: ["abierta", "dividida"] } } }, { cuentaId: null }],
+});
+
+/** Cantidad de items (no cancelados) de la cuenta en curso de la mesa; 0 = abierta sin consumo. */
+export async function contarConsumoActivo(mesaId: string) {
+  return prisma.itemPedido.count({ where: { estado: { not: "cancelado" }, pedido: pedidosEnCurso(mesaId) } });
+}
+
+/** Platos de la cuenta en curso que aun no se han llevado a la mesa (pendientes, en cocina o listos). */
+export async function contarItemsPorEntregar(mesaId: string) {
+  return prisma.itemPedido.count({ where: { estado: { in: ["pendiente", "en_preparacion", "listo"] }, pedido: pedidosEnCurso(mesaId) } });
+}
 
 /**
  * Abre una mesa libre/reservada, o la "toma" si ya esta ocupada pero nadie la

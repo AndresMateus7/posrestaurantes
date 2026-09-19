@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { disponibleEfectivo } from "@/lib/disponibilidad";
 import { emitirEvento } from "@/lib/realtime";
 import { recalcularCuenta } from "@/lib/cuentas";
+import { contarItemsPorEntregar } from "@/lib/mesas";
 
 export type ItemCarrito = {
   productoId: string;
@@ -101,7 +102,9 @@ export async function crearPedido(
       }
     }
 
-    if (mesa.estado === "libre") {
+    // Un pedido nuevo en una mesa que ya estaba servida vuelve a dejarla "ocupada"
+    // (hay algo por llevar otra vez).
+    if (mesa.estado === "libre" || mesa.estado === "pedido_servido") {
       await tx.mesa.update({ where: { id: mesa.id }, data: { estado: "ocupada" } });
     }
 
@@ -162,25 +165,48 @@ export async function actualizarEstadoItem(restauranteId: string, itemId: string
 }
 
 /**
- * El mesero marca un pedido como entregado (items listos -> entregado). La
- * mesa solo pasa a "pedido_servido" cuando TODOS sus pedidos activos ya se
- * entregaron -- si queda otro pedido cocinandose, sigue "ocupada".
+ * El mesero lleva platos a la mesa: pasan de "listo" a "entregado". Puede
+ * entregar platos sueltos (itemIds) o todo lo que este listo del pedido. El
+ * pedido queda "entregado" cuando ya no le falta ningun plato, y la mesa pasa
+ * a "pedido_servido" solo cuando no queda nada por llevar en toda su cuenta --
+ * si otro plato sigue en cocina, la mesa sigue "ocupada".
  */
-export async function marcarPedidoEntregado(restauranteId: string, pedidoId: string) {
-  const pedido = await prisma.pedido.findUnique({ where: { id: pedidoId } });
+export async function entregarItems(restauranteId: string, pedidoId: string, itemIds?: string[]) {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    include: { mesa: true, items: { include: { producto: { select: { nombre: true } } } } },
+  });
   if (!pedido || pedido.restauranteId !== restauranteId) throw new PedidoError("pedido_no_existe", "Pedido no existe");
 
-  await prisma.$transaction([
-    prisma.itemPedido.updateMany({ where: { pedidoId, estado: "listo" }, data: { estado: "entregado" } }),
-    prisma.pedido.update({ where: { id: pedidoId }, data: { estado: "entregado" } }),
-  ]);
+  let porEntregar = pedido.items.filter((it) => it.estado === "listo");
+  if (itemIds) {
+    const solicitados = new Set(itemIds);
+    const elegidos = pedido.items.filter((it) => solicitados.has(it.id));
+    if (elegidos.length !== solicitados.size) throw new PedidoError("item_no_existe", "Ese plato no pertenece al pedido");
+    const noListo = elegidos.find((it) => it.estado !== "listo");
+    if (noListo) {
+      const motivo = noListo.estado === "entregado" ? "ya fue entregado" : "todavía no está listo en cocina";
+      throw new PedidoError("item_no_listo", `${noListo.producto.nombre} ${motivo}`);
+    }
+    porEntregar = elegidos;
+  }
+  if (porEntregar.length === 0) throw new PedidoError("nada_por_entregar", "No hay platos listos por entregar en este pedido");
 
-  const otrosPendientes = await prisma.pedido.count({
-    where: { mesaId: pedido.mesaId, id: { not: pedidoId }, estado: { notIn: ["entregado", "cancelado"] } },
-  });
-  if (otrosPendientes === 0) {
-    await prisma.mesa.update({ where: { id: pedido.mesaId }, data: { estado: "pedido_servido" } });
+  const ids = porEntregar.map((it) => it.id);
+  await prisma.itemPedido.updateMany({ where: { id: { in: ids }, estado: "listo" }, data: { estado: "entregado" } });
+
+  const faltan = await prisma.itemPedido.count({ where: { pedidoId, estado: { in: ["pendiente", "en_preparacion", "listo"] } } });
+  if (faltan === 0) await prisma.pedido.update({ where: { id: pedidoId }, data: { estado: "entregado" } });
+
+  // Solo una mesa "ocupada" pasa a servida: si ya pidieron la cuenta, sigue "cuenta solicitada".
+  let mesaServida = false;
+  if ((await contarItemsPorEntregar(pedido.mesaId)) === 0) {
+    const { count } = await prisma.mesa.updateMany({ where: { id: pedido.mesaId, estado: "ocupada" }, data: { estado: "pedido_servido" } });
+    mesaServida = count > 0;
   }
 
-  emitirEvento(restauranteId, "pedido-entregado", { pedidoId, mesaId: pedido.mesaId });
+  emitirEvento(restauranteId, "pedido-entregado", { pedidoId, mesaId: pedido.mesaId, itemIds: ids });
+  if (mesaServida) emitirEvento(restauranteId, "mesa-actualizada", { mesaId: pedido.mesaId, numero: pedido.mesa.numero, estado: "pedido_servido" });
+
+  return { entregados: ids.length, pedidoCompleto: faltan === 0, mesaServida };
 }

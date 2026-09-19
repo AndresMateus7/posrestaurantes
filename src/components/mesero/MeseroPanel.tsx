@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
+import { useRefrescoPeriodico } from "@/lib/useRefrescoPeriodico";
+import { reproducirBeep } from "@/lib/beep";
 import { PedidoMesero } from "./PedidoMesero";
+import { LlamadosLista, type LlamadoPendiente } from "./LlamadosLista";
+import { AsignarMesero } from "./AsignarMesero";
 
 type Mesa = {
   id: string;
@@ -13,8 +17,8 @@ type Mesa = {
   meseroId: string | null;
   mesero: { nombre: string } | null;
 };
-type Llamado = { id: string; tipo: "llamar_mesero" | "solicitar_cuenta"; mesaNumero: string; comentario: string | null; creadoEn: string };
-type ItemCuenta = { id: string; nombreProducto: string; cantidad: number; estado: string; pedidoId: string; adicionales: string[] };
+type ItemCuenta = { id: string; nombreProducto: string; cantidad: number; estado: string; pedidoId: string; pedidoCreadoEn: string; adicionales: string[] };
+type GrupoPedido = { pedidoId: string; creadoEn: string; items: ItemCuenta[] };
 type TipoElemento = "mesa" | "barra" | "pared" | "caja" | "cocina" | "decoracion";
 type ElementoPlano = { id: string; tipo: TipoElemento; forma?: "cuadrada" | "redonda" | "rectangular"; x: number; y: number; ancho: number; alto: number; rotacion: number };
 
@@ -28,7 +32,28 @@ const ESTILO_ESTADO: Record<string, { label: string; clase: string }> = {
   reservada: { label: "Reservada", clase: "bg-purple-50 border-purple-400 text-purple-700" },
 };
 const ETIQUETA_ITEM: Record<string, string> = { pendiente: "Pendiente", en_preparacion: "En preparación", listo: "Listo", entregado: "Entregado" };
+const CLASE_ITEM: Record<string, string> = {
+  pendiente: "bg-gray-100 text-gray-500",
+  en_preparacion: "bg-amber-100 text-amber-700",
+  listo: "bg-green-100 text-green-700",
+  entregado: "bg-blue-50 text-blue-700",
+};
 const formatoCOP = (v: number) => "$" + v.toLocaleString("es-CO");
+const formatoHora = (iso: string) => new Date(iso).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", timeZone: "America/Bogota" });
+
+// Los platos llegan en orden de creacion: cada pedido queda como un grupo, en orden.
+function agruparPorPedido(items: ItemCuenta[]): GrupoPedido[] {
+  const grupos: GrupoPedido[] = [];
+  for (const it of items) {
+    let grupo = grupos.find((g) => g.pedidoId === it.pedidoId);
+    if (!grupo) {
+      grupo = { pedidoId: it.pedidoId, creadoEn: it.pedidoCreadoEn, items: [] };
+      grupos.push(grupo);
+    }
+    grupo.items.push(it);
+  }
+  return grupos;
+}
 
 const estaAbierta = (m: Mesa) => m.estado !== "libre" && m.estado !== "reservada";
 // Un mesero no ve el detalle de las mesas que atiende otro mesero; caja y admin ven todo.
@@ -52,61 +77,70 @@ export function MeseroPanel({
 }) {
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [layout, setLayout] = useState<ElementoPlano[]>([]);
-  const [llamados, setLlamados] = useState<Llamado[]>([]);
+  const [llamados, setLlamados] = useState<LlamadoPendiente[]>([]);
   const [nuevosIds, setNuevosIds] = useState<Set<string>>(new Set());
   const [mesaAbiertaId, setMesaAbiertaId] = useState<string | null>(null);
   const [pedidoMesa, setPedidoMesa] = useState<Mesa | null>(null);
   const [cuenta, setCuenta] = useState<{ total: number; items: ItemCuenta[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // Mesa cuya cuenta acabo de cerrar yo: su aviso "Piden la cuenta" es para Caja, no para mi.
+  const cierrePropioRef = useRef<string | null>(null);
 
   const esMesero = rol === "mesero";
   const mesaAbierta = mesas.find((m) => m.id === mesaAbiertaId) ?? null;
 
+  // Las respuestas de error (sesion vencida, mesa de otro mesero...) se ignoran: no deben tumbar la pantalla.
   const cargarMesas = useCallback(
     () =>
       fetch("/api/plano")
         .then((r) => r.json())
         .then((data) => {
+          if (!data?.plano) return;
           setLayout(data.plano.layout);
           setMesas(data.mesas);
         }),
     []
   );
-  const cargarLlamados = useCallback(() => fetch("/api/llamados").then((r) => r.json()).then(setLlamados), []);
-  const cargarCuenta = useCallback((mesaId: string) => fetch(`/api/mesas/${mesaId}/cuenta`).then((r) => r.json()).then(setCuenta), []);
+  const cargarLlamados = useCallback(
+    () =>
+      fetch("/api/llamados")
+        .then((r) => r.json())
+        .then((lista: unknown) => {
+          if (Array.isArray(lista)) setLlamados(lista as LlamadoPendiente[]);
+        }),
+    []
+  );
+  const cargarCuenta = useCallback(
+    (mesaId: string) =>
+      fetch(`/api/mesas/${mesaId}/cuenta`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data?.items)) setCuenta(data);
+        }),
+    []
+  );
 
   useEffect(() => {
     cargarMesas();
     cargarLlamados();
   }, [cargarMesas, cargarLlamados]);
 
+  // Red de seguridad del canal en vivo: mesas y llamados se refrescan solos.
+  useRefrescoPeriodico(() => {
+    cargarMesas();
+    cargarLlamados();
+  });
+
   function mostrarToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 2600);
   }
 
-  function reproducirBeep() {
-    try {
-      const ctx = new AudioContext();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.frequency.value = 880;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      gain.gain.setValueAtTime(0.001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.35);
-    } catch {
-      // sin audio disponible; no es critico
-    }
-  }
-
   useEventos({
     "llamado-creado": (payload) => {
-      const l = payload as Llamado;
+      const l = payload as LlamadoPendiente & { mesaId?: string };
       setLlamados((prev) => (prev.some((x) => x.id === l.id) ? prev : [l, ...prev]));
+      if (l.tipo === "solicitar_cuenta" && l.mesaId === cierrePropioRef.current) return;
       setNuevosIds((prev) => new Set(prev).add(l.id));
       setTimeout(() => setNuevosIds((prev) => { const s = new Set(prev); s.delete(l.id); return s; }), 3000);
       reproducirBeep();
@@ -117,9 +151,15 @@ export function MeseroPanel({
       setLlamados((prev) => prev.filter((l) => l.id !== id));
     },
     // Cuando alguien toma una mesa, los llamados de esa mesa dejan de ser visibles para los demas meseros.
-    "mesa-actualizada": () => {
+    "mesa-actualizada": (payload) => {
       cargarMesas();
       cargarLlamados();
+      // Caja/admin le asignaron esta mesa a este mesero (solo ese evento trae meseroId).
+      const p = payload as { numero?: string; meseroId?: string | null };
+      if (p.meseroId && p.meseroId === usuarioId) {
+        reproducirBeep();
+        mostrarToast(`📌 Te asignaron la Mesa ${p.numero}`);
+      }
     },
     "pedido-creado": () => cargarMesas(),
     "item-actualizado": () => cargarMesas(),
@@ -169,22 +209,55 @@ export function MeseroPanel({
     mostrarToast(`Mesa ${mesa.numero} quedó a tu nombre`);
   }
 
-  async function marcarEntregado(mesa: Mesa) {
-    if (!cuenta) return;
-    const pedidosListos = [...new Set(cuenta.items.filter((it) => it.estado === "listo").map((it) => it.pedidoId))];
-    for (const pedidoId of pedidosListos) {
-      if (!(await accion(`/api/pedidos/${pedidoId}/entregar`, { method: "POST" }))) return;
+  // Entrega UN plato a la mesa (el mesero elige cual). La ventana sigue abierta
+  // para poder seguir entregando; se refresca sola al recargar las mesas.
+  async function entregarPlato(mesa: Mesa, plato: ItemCuenta) {
+    const ok = await accion(`/api/pedidos/${plato.pedidoId}/entregar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemIds: [plato.id] }),
+    });
+    if (!ok) return;
+    await cargarMesas();
+    mostrarToast(`${plato.nombreProducto} entregado a la Mesa ${mesa.numero} ✅`);
+  }
+
+  // Entrega todo lo que ya esta listo de un pedido (lo que sigue en cocina queda pendiente).
+  async function entregarPedido(mesa: Mesa, grupo: GrupoPedido) {
+    if (!(await accion(`/api/pedidos/${grupo.pedidoId}/entregar`, { method: "POST" }))) return;
+    await cargarMesas();
+    mostrarToast(`Pedido entregado a la Mesa ${mesa.numero} ✅`);
+  }
+
+  // "Cerrar cuenta": la cuenta queda cerrada con su valor y pasa a Caja para cobrarla.
+  async function cerrarCuenta(mesa: Mesa) {
+    const total = cuenta?.total ?? 0;
+    cierrePropioRef.current = mesa.id;
+    const ok = await accion(`/api/mesas/${mesa.id}/solicitar-cuenta`, { method: "POST" });
+    // El aviso en vivo llega junto con la respuesta: se deja un margen y luego vuelve a avisar normal.
+    setTimeout(() => {
+      if (cierrePropioRef.current === mesa.id) cierrePropioRef.current = null;
+    }, 5000);
+    if (!ok) {
+      cierrePropioRef.current = null;
+      return;
     }
     await cargarMesas();
     setMesaAbiertaId(null);
-    mostrarToast(`Pedido de Mesa ${mesa.numero} marcado entregado`);
+    mostrarToast(`Cuenta de Mesa ${mesa.numero} cerrada: ${formatoCOP(total)} — pasó a Caja para cobrar`);
   }
 
-  async function solicitarCuenta(mesa: Mesa) {
-    if (!(await accion(`/api/mesas/${mesa.id}/solicitar-cuenta`, { method: "POST" }))) return;
-    await cargarMesas();
+  // Mesa que se abrio pero no consumio nada.
+  async function liberarMesa(mesa: Mesa) {
+    if (!(await accion(`/api/mesas/${mesa.id}/liberar`, { method: "POST" }))) return;
+    await Promise.all([cargarMesas(), cargarLlamados()]);
     setMesaAbiertaId(null);
-    mostrarToast(`Cuenta solicitada para Mesa ${mesa.numero}`);
+    mostrarToast(`Mesa ${mesa.numero} liberada`);
+  }
+
+  async function meseroAsignado(mesa: Mesa, mesero: { nombre: string } | null) {
+    await Promise.all([cargarMesas(), cargarLlamados()]);
+    mostrarToast(mesero ? `Mesa ${mesa.numero} asignada a ${mesero.nombre}` : `Mesa ${mesa.numero} quedó sin mesero`);
   }
 
   function etiquetaMesero(mesa: Mesa) {
@@ -220,26 +293,7 @@ export function MeseroPanel({
       <Contenedor className={embebido ? "space-y-6" : "max-w-5xl mx-auto px-4 py-5 space-y-6"}>
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Llamados pendientes</h2>
-          <div className="space-y-2">
-            {llamados.map((l) => (
-              <div
-                key={l.id}
-                className={`flex items-center gap-3 bg-white rounded-xl border border-amber-200 px-4 py-2.5 shadow-sm ${nuevosIds.has(l.id) ? "animate-pulse" : ""}`}
-              >
-                <span className="text-xl">{l.tipo === "llamar_mesero" ? "🛎️" : "🧾"}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">
-                    {l.tipo === "llamar_mesero" ? "Llaman al mesero" : "Piden la cuenta"} — Mesa {l.mesaNumero}
-                  </p>
-                  {l.comentario && <p className="text-sm mt-0.5 opacity-80 break-words">&ldquo;{l.comentario}&rdquo;</p>}
-                </div>
-                <button onClick={() => atenderLlamado(l.id)} className="text-white text-xs font-semibold rounded-full px-3 py-1.5 shrink-0" style={{ background: "var(--color-primario)" }}>
-                  Atender
-                </button>
-              </div>
-            ))}
-            {llamados.length === 0 && <p className="text-sm opacity-50">No hay llamados pendientes. 👍</p>}
-          </div>
+          <LlamadosLista llamados={llamados} nuevosIds={nuevosIds} mostrarMesero={!esMesero} onAtender={atenderLlamado} />
         </section>
 
         <section>
@@ -340,24 +394,61 @@ export function MeseroPanel({
                   {ESTILO_ESTADO[mesaAbierta.estado].label}
                   {!esMesero && ` · Atiende: ${mesaAbierta.mesero?.nombre ?? "sin mesero"}`}
                 </p>
-                <div className="space-y-2 mt-4">
-                  {cuenta?.items.map((it) => (
-                    <div key={it.id} className="flex items-center justify-between text-sm border-b border-gray-100 pb-2">
-                      <span>
-                        {it.nombreProducto} <span className="opacity-50">× {it.cantidad}</span>
-                        {it.adicionales.length > 0 && <span className="block text-xs opacity-50">+ {it.adicionales.join(", +")}</span>}
-                      </span>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${it.estado === "listo" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                        {ETIQUETA_ITEM[it.estado]}
-                      </span>
-                    </div>
-                  ))}
-                  {cuenta?.items.length === 0 && <p className="text-sm opacity-50">Sin items activos.</p>}
+                <div className="space-y-3 mt-4">
+                  {agruparPorPedido(cuenta?.items ?? []).map((grupo, i) => {
+                    const listos = grupo.items.filter((it) => it.estado === "listo");
+                    return (
+                      <div key={grupo.pedidoId} className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="flex items-center justify-between gap-2 bg-gray-50 px-3 py-1.5">
+                          <span className="text-xs font-semibold opacity-60">
+                            Pedido {i + 1} · {formatoHora(grupo.creadoEn)}
+                          </span>
+                          {listos.length >= 2 && (
+                            <button
+                              onClick={() => entregarPedido(mesaAbierta, grupo)}
+                              className="text-[11px] font-semibold text-white rounded-full px-2.5 py-1"
+                              style={{ background: "var(--color-primario)" }}
+                            >
+                              {listos.length === grupo.items.length ? "Entregar pedido completo" : `Entregar lo que está listo (${listos.length})`}
+                            </button>
+                          )}
+                        </div>
+                        <div className="px-3">
+                          {grupo.items.map((it) => (
+                            <div key={it.id} className="flex items-center justify-between gap-2 text-sm border-b border-gray-100 last:border-b-0 py-2">
+                              <span className={it.estado === "entregado" ? "opacity-50" : ""}>
+                                {it.nombreProducto} <span className="opacity-50">× {it.cantidad}</span>
+                                {it.adicionales.length > 0 && <span className="block text-xs opacity-50">+ {it.adicionales.join(", +")}</span>}
+                              </span>
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${CLASE_ITEM[it.estado] ?? CLASE_ITEM.pendiente}`}>{ETIQUETA_ITEM[it.estado] ?? it.estado}</span>
+                                {it.estado === "listo" && (
+                                  <button
+                                    onClick={() => entregarPlato(mesaAbierta, it)}
+                                    className="text-xs font-semibold text-white rounded-full px-3 py-1"
+                                    style={{ background: "var(--color-primario)" }}
+                                  >
+                                    Entregar
+                                  </button>
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {cuenta?.items.length === 0 && <p className="text-sm opacity-50">Todavía no hay pedidos en esta mesa.</p>}
                 </div>
                 <div className="flex justify-between font-bold mt-4">
-                  <span>Total corriente</span>
+                  <span>Total de la cuenta</span>
                   <span>{formatoCOP(cuenta?.total ?? 0)}</span>
                 </div>
+                {mesaAbierta.estado === "cuenta_solicitada" && (
+                  <div className="mt-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl px-3 py-2 text-sm">
+                    🧾 Cuenta cerrada — pendiente de cobro en Caja: <b>{formatoCOP(cuenta?.total ?? 0)}</b>
+                  </div>
+                )}
                 <button
                   onClick={() => {
                     setPedidoMesa(mesaAbierta);
@@ -368,20 +459,31 @@ export function MeseroPanel({
                 >
                   Tomar pedido
                 </button>
-                <div className={`grid ${mesaAbierta.estado === "cuenta_solicitada" || !cuenta?.items.some((it) => it.estado === "listo") ? "grid-cols-1" : "grid-cols-2"} gap-2 mt-2`}>
-                  {cuenta?.items.some((it) => it.estado === "listo") && (
-                    <button onClick={() => marcarEntregado(mesaAbierta)} className="border border-gray-300 rounded-xl py-2.5 text-sm font-semibold">
-                      Marcar entregado
-                    </button>
-                  )}
-                  {mesaAbierta.estado !== "cuenta_solicitada" ? (
-                    <button onClick={() => solicitarCuenta(mesaAbierta)} className="border border-gray-300 rounded-xl py-2.5 text-sm font-semibold">
-                      Solicitar cuenta
-                    </button>
-                  ) : (
-                    <p className="text-xs text-center opacity-50 py-2">El cierre de pago lo hace Caja.</p>
-                  )}
-                </div>
+                {cuenta !== null && cuenta.total === 0 && (
+                  <button onClick={() => liberarMesa(mesaAbierta)} className="w-full border border-gray-300 rounded-xl py-2.5 text-sm font-semibold mt-2">
+                    Liberar mesa (sin consumo)
+                  </button>
+                )}
+                {cuenta !== null && cuenta.total > 0 && mesaAbierta.estado !== "cuenta_solicitada" && (
+                  <button
+                    onClick={() => cerrarCuenta(mesaAbierta)}
+                    className="w-full border-2 rounded-xl py-2.5 text-sm font-semibold mt-2"
+                    style={{ borderColor: "var(--color-primario)", color: "var(--color-primario)" }}
+                  >
+                    Cerrar cuenta · {formatoCOP(cuenta.total)}
+                  </button>
+                )}
+                {!esMesero && (
+                  <div className="mt-4">
+                    <AsignarMesero
+                      key={mesaAbierta.id}
+                      mesaId={mesaAbierta.id}
+                      meseroIdActual={mesaAbierta.meseroId}
+                      onAsignado={(mesero) => meseroAsignado(mesaAbierta, mesero)}
+                      onError={mostrarToast}
+                    />
+                  </div>
+                )}
               </>
             )}
           </div>

@@ -2,9 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useEventos } from "@/lib/useEventos";
+import { useRefrescoPeriodico } from "@/lib/useRefrescoPeriodico";
+import { reproducirBeep } from "@/lib/beep";
 import { HistorialVentasTab } from "@/components/admin/HistorialVentasTab";
 import { FacturasProveedorTab } from "@/components/admin/FacturasProveedorTab";
 import { MeseroPanel } from "@/components/mesero/MeseroPanel";
+import { LlamadosLista, type LlamadoPendiente } from "@/components/mesero/LlamadosLista";
+import { AsignarMesero } from "@/components/mesero/AsignarMesero";
 
 type TurnoResumen = {
   id: string;
@@ -25,6 +29,9 @@ type CuentaResumen = {
   id: string;
   mesaId: string;
   mesaNumero: string;
+  // "cuenta_solicitada" = la cuenta ya se cerro (mesero, caja o cliente) y espera el cobro.
+  mesaEstado: string;
+  meseroId: string | null;
   meseroNombre: string | null;
   estado: string;
   subtotal: number;
@@ -33,6 +40,8 @@ type CuentaResumen = {
   totalPagado: number;
   creadoEn: string;
 };
+
+type CuentaCobrada = { id: string; mesaNumero: string; cerradoEn: string; total: number; pagos: { metodo: string; monto: number }[] };
 
 type ItemDetalle = {
   id: string;
@@ -56,6 +65,7 @@ type CuentaDetalle = {
   id: string;
   mesaId: string;
   mesaNumero: string;
+  meseroId: string | null;
   meseroNombre: string | null;
   estado: string;
   subtotal: number;
@@ -81,6 +91,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   const [turno, setTurno] = useState<TurnoResumen | null | undefined>(undefined);
   const [montoInicialInput, setMontoInicialInput] = useState("");
   const [cuentas, setCuentas] = useState<CuentaResumen[]>([]);
+  const [cobradas, setCobradas] = useState<CuentaCobrada[]>([]);
   const [cuentaSeleccionadaId, setCuentaSeleccionadaId] = useState<string | null>(null);
   const [detalle, setDetalle] = useState<CuentaDetalle | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -106,7 +117,10 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   const [montoFinalInput, setMontoFinalInput] = useState("");
 
   const [vista, setVista] = useState<"caja" | "salon" | "historial" | "facturas">("caja");
-  const [llamadosPendientes, setLlamadosPendientes] = useState(0);
+  // Llamados de TODOS los meseros ("Llaman al mesero" / "Piden la cuenta"): caja los ve
+  // y salen de la lista cuando alguien pulsa "Atender" o se cobra la cuenta de esa mesa.
+  const [llamados, setLlamados] = useState<LlamadoPendiente[]>([]);
+  const [nuevosIds, setNuevosIds] = useState<Set<string>>(new Set());
 
   function mostrarToast(msg: string) {
     setToast(msg);
@@ -114,13 +128,33 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   }
 
   const cargarTurno = useCallback(() => fetch("/api/turnos").then((r) => r.json()).then(setTurno), []);
-  const cargarCuentas = useCallback(() => fetch("/api/cuentas").then((r) => r.json()).then(setCuentas), []);
+  const cargarCuentas = useCallback(
+    () =>
+      fetch("/api/cuentas")
+        .then((r) => r.json())
+        .then((lista: unknown) => {
+          if (Array.isArray(lista)) setCuentas(lista as CuentaResumen[]);
+        }),
+    []
+  );
   const cargarDetalle = useCallback((id: string) => fetch(`/api/cuentas/${id}`).then((r) => r.json()).then(setDetalle), []);
+  // Cuentas ya cobradas y cerradas desde que se abrio el turno (con su valor).
+  const abiertoEn = turno?.abiertoEn;
+  const cargarCobradas = useCallback(() => {
+    if (!abiertoEn) return Promise.resolve();
+    return fetch(`/api/ventas?desde=${encodeURIComponent(abiertoEn)}`)
+      .then((r) => r.json())
+      .then((lista: unknown) => {
+        if (Array.isArray(lista)) setCobradas(lista as CuentaCobrada[]);
+      });
+  }, [abiertoEn]);
   const cargarLlamados = useCallback(
     () =>
       fetch("/api/llamados")
         .then((r) => r.json())
-        .then((l: unknown[]) => setLlamadosPendientes(l.length)),
+        .then((lista: unknown) => {
+          if (Array.isArray(lista)) setLlamados(lista as LlamadoPendiente[]);
+        }),
     []
   );
 
@@ -129,9 +163,19 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     cargarLlamados();
   }, [cargarTurno, cargarLlamados]);
 
+  // Red de seguridad del canal en vivo: llamados y cuentas se refrescan solos.
+  useRefrescoPeriodico(() => {
+    cargarLlamados();
+    cargarCuentas();
+  });
+
   useEffect(() => {
     if (turno) cargarCuentas();
   }, [turno, cargarCuentas]);
+
+  useEffect(() => {
+    cargarCobradas();
+  }, [cargarCobradas]);
 
   useEffect(() => {
     if (cuentaSeleccionadaId) cargarDetalle(cuentaSeleccionadaId);
@@ -151,6 +195,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     },
     "cuenta-cerrada": (payload) => {
       cargarCuentas();
+      cargarCobradas();
       const p = payload as { cuentaId: string };
       if (cuentaSeleccionadaId === p.cuentaId) {
         cerrarDetalle();
@@ -158,17 +203,40 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
       }
     },
     "pedido-creado": () => cargarCuentas(),
-    // Si no hay mesero, caja atiende los llamados: contador en la pestaña "Mesas y pedidos"
-    // y aviso mientras esta en otra vista (en esa pestaña el propio panel avisa y suena).
+    // Caja ve los llamados de todos los meseros. En "Mesas y pedidos" el propio panel avisa y
+    // suena; en las demas vistas avisa Caja (lista + pitido + aviso).
     "llamado-creado": (payload) => {
-      cargarLlamados();
+      const l = payload as LlamadoPendiente;
+      setLlamados((prev) => (prev.some((x) => x.id === l.id) ? prev : [l, ...prev]));
       if (vista === "salon") return;
-      const l = payload as { tipo: string; mesaNumero: string };
+      setNuevosIds((prev) => new Set(prev).add(l.id));
+      setTimeout(() => setNuevosIds((prev) => { const s = new Set(prev); s.delete(l.id); return s; }), 3000);
+      reproducirBeep();
       mostrarToast(`${l.tipo === "llamar_mesero" ? "🛎️ Llaman al mesero" : "🧾 Piden la cuenta"} — Mesa ${l.mesaNumero}`);
     },
-    "llamado-atendido": () => cargarLlamados(),
-    "mesa-actualizada": () => cargarCuentas(),
+    // El mesero (o Caja) pulso "Atender": el llamado desaparece de la lista de Caja.
+    "llamado-atendido": (payload) => {
+      const { id } = payload as { id: string };
+      setLlamados((prev) => prev.filter((l) => l.id !== id));
+    },
+    // La mesa cambio de mesero o de estado: se actualizan las cuentas y el nombre del mesero en los llamados.
+    "mesa-actualizada": () => {
+      cargarCuentas();
+      cargarLlamados();
+    },
   });
+
+  async function atenderLlamado(id: string) {
+    const res = await fetch(`/api/llamados/${id}`, { method: "PATCH" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      mostrarToast(data.error ?? "No se pudo atender el llamado");
+      cargarLlamados();
+      return;
+    }
+    setLlamados((prev) => prev.filter((l) => l.id !== id));
+    mostrarToast("Llamado atendido ✅");
+  }
 
   async function confirmarAbrirTurno() {
     const monto = Number(montoInicialInput) || 0;
@@ -311,20 +379,32 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
       return;
     }
     setMostrarPago(false);
+    // Si con este pago queda saldada, la cuenta se cierra sola y la mesa se libera.
+    if (detalle.totalPagado + monto >= detalle.total) {
+      await cerrarCuentaDe(detalle.id, `Mesa ${detalle.mesaNumero} cobrada: ${formatoCOP(detalle.total)} — cuenta cerrada, mesa liberada`);
+      return;
+    }
     cargarDetalle(detalle.id);
     mostrarToast("Pago registrado");
   }
 
-  async function cerrarCuentaActual() {
-    if (!detalle) return;
-    const res = await fetch(`/api/cuentas/${detalle.id}/cerrar`, { method: "POST" });
+  async function cerrarCuentaDe(id: string, mensaje: string) {
+    const res = await fetch(`/api/cuentas/${id}/cerrar`, { method: "POST" });
     const data = await res.json();
     if (!res.ok) {
       mostrarToast(data.error ?? "No se pudo cerrar la cuenta");
+      cargarDetalle(id);
       return;
     }
     cerrarDetalle();
-    mostrarToast("Cuenta cerrada, mesa liberada");
+    cargarCuentas();
+    cargarCobradas();
+    cargarTurno();
+    mostrarToast(mensaje);
+  }
+
+  function cerrarCuentaActual() {
+    if (detalle) return cerrarCuentaDe(detalle.id, `Mesa ${detalle.mesaNumero} cerrada, mesa liberada`);
   }
 
   async function confirmarMovimiento() {
@@ -378,6 +458,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   }
 
   const saldoPendiente = detalle ? detalle.total - detalle.totalPagado : 0;
+  const detalleCerrada = !!detalle && cuentas.find((c) => c.id === detalle.id)?.mesaEstado === "cuenta_solicitada";
+  // Las cuentas que ya cerro el mesero (o el cliente) van primero: son las que hay que cobrar.
+  const cuentasOrdenadas = [...cuentas].sort((a, b) => Number(b.mesaEstado === "cuenta_solicitada") - Number(a.mesaEstado === "cuenta_solicitada"));
 
   return (
     <div className="min-h-screen pb-10" style={{ background: "var(--color-fondo)", fontFamily: "var(--fuente)" }}>
@@ -416,8 +499,8 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                 style={vista === id ? { background: "var(--color-secundario)" } : undefined}
               >
                 {nombre}
-                {id === "salon" && llamadosPendientes > 0 && (
-                  <span className="ml-1.5 bg-red-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{llamadosPendientes}</span>
+                {(id === "salon" || id === "caja") && llamados.length > 0 && (
+                  <span className="ml-1.5 bg-red-600 text-white rounded-full px-1.5 py-0.5 text-[10px] font-bold">{llamados.length}</span>
                 )}
               </button>
             ))}
@@ -429,6 +512,13 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
         {vista === "salon" && <MeseroPanel embebido usuarioId={usuarioId} rol={rol} />}
         {vista === "historial" && <HistorialVentasTab />}
         {vista === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
+        {vista === "caja" && (
+          <section>
+            <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60">Llamados pendientes ({llamados.length})</h2>
+            <p className="text-xs opacity-50 mb-2">Mesas que llaman al mesero o piden la cuenta, de todos los meseros. Salen de la lista cuando el mesero pulsa &ldquo;Atender&rdquo; o se cobra la cuenta.</p>
+            <LlamadosLista llamados={llamados} nuevosIds={nuevosIds} mostrarMesero onAtender={atenderLlamado} />
+          </section>
+        )}
         {vista === "caja" && !turno && (
           <div className="bg-white rounded-2xl shadow-sm p-6 w-full max-w-sm mx-auto">
             <h2 className="text-lg font-semibold">Abrir turno de caja</h2>
@@ -466,27 +556,57 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Cuentas por cobrar</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60">Cuentas activas ({cuentas.length})</h2>
+          <p className="text-xs opacity-50 mb-2">Todas las mesas con consumo. Las que ya cerró el mesero salen primero, con el valor listo para cobrar.</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {cuentas.map((c) => {
+            {cuentasOrdenadas.map((c) => {
               const pendiente = c.total - c.totalPagado;
+              const cerrada = c.mesaEstado === "cuenta_solicitada";
+              const estilo =
+                pendiente <= 0
+                  ? "bg-green-50 border-green-400 text-green-700"
+                  : cerrada
+                    ? "bg-amber-100 border-amber-500 text-amber-900"
+                    : c.estado === "dividida"
+                      ? "bg-purple-50 border-purple-400 text-purple-700"
+                      : "bg-blue-50 border-blue-300 text-blue-800";
+              const etiqueta = pendiente <= 0 ? "Pagada" : cerrada ? "🧾 Cuenta cerrada" : "En curso";
               return (
-                <button
-                  key={c.id}
-                  onClick={() => abrirDetalleCuenta(c.id)}
-                  className={`rounded-2xl border-2 p-4 text-left transition hover:brightness-95 ${
-                    pendiente <= 0 ? "bg-green-50 border-green-400 text-green-700" : c.estado === "dividida" ? "bg-purple-50 border-purple-400 text-purple-700" : "bg-amber-50 border-amber-400 text-amber-800"
-                  }`}
-                >
+                <button key={c.id} onClick={() => abrirDetalleCuenta(c.id)} className={`rounded-2xl border-2 p-4 text-left transition hover:brightness-95 ${estilo}`}>
                   <p className="text-2xl font-bold">Mesa {c.mesaNumero}</p>
-                  <p className="text-sm font-semibold mt-1">{formatoCOP(c.total)}</p>
-                  <p className="text-[11px] opacity-70 mt-0.5">{pendiente <= 0 ? "Pagado" : `Faltan ${formatoCOP(pendiente)}`}</p>
+                  <p className="text-lg font-bold mt-0.5">{formatoCOP(c.total)}</p>
+                  <p className="text-[11px] font-semibold mt-0.5">
+                    {etiqueta}
+                    {c.estado === "dividida" && " · dividida"}
+                  </p>
+                  {pendiente > 0 && c.totalPagado > 0 && <p className="text-[11px] opacity-70">Faltan {formatoCOP(pendiente)}</p>}
                   <p className="text-[11px] font-medium mt-1 truncate">🧑‍🍳 {c.meseroNombre ?? "Sin mesero"}</p>
                 </button>
               );
             })}
-            {cuentas.length === 0 && <p className="text-sm opacity-50 col-span-full">No hay cuentas abiertas ahora mismo.</p>}
+            {cuentas.length === 0 && <p className="text-sm opacity-50 col-span-full">No hay cuentas activas ahora mismo.</p>}
           </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60 mb-2">Cuentas cobradas en este turno ({cobradas.length})</h2>
+          {cobradas.length === 0 ? (
+            <p className="text-sm opacity-50">Todavía no se ha cobrado ninguna cuenta.</p>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm divide-y divide-gray-100">
+              {cobradas.map((c) => (
+                <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                  <span className="font-semibold w-20 shrink-0">Mesa {c.mesaNumero}</span>
+                  <span className="text-xs opacity-60 flex-1 truncate">
+                    {new Date(c.cerradoEn).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", timeZone: "America/Bogota" })}
+                    {" · "}
+                    {[...new Set(c.pagos.map((p) => ETIQUETA_METODO[p.metodo] ?? p.metodo))].join(", ")}
+                  </span>
+                  <span className="font-bold">{formatoCOP(c.total)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
         </>
         )}
@@ -498,6 +618,21 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
           <div className="absolute bottom-0 left-0 right-0 sm:m-auto sm:relative sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-white p-5">
             <h3 className="text-lg font-semibold">Mesa {detalle.mesaNumero}</h3>
             <p className="text-xs opacity-60">Atiende: {detalle.meseroNombre ?? "sin mesero"}</p>
+            {detalleCerrada && <p className="mt-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl px-3 py-1.5 text-xs">🧾 Cuenta cerrada — lista para cobrar</p>}
+            <div className="mt-3">
+              <AsignarMesero
+                key={detalle.mesaId}
+                mesaId={detalle.mesaId}
+                meseroIdActual={detalle.meseroId}
+                onAsignado={(mesero) => {
+                  cargarDetalle(detalle.id);
+                  cargarCuentas();
+                  cargarLlamados();
+                  mostrarToast(mesero ? `Mesa ${detalle.mesaNumero} asignada a ${mesero.nombre}` : `Mesa ${detalle.mesaNumero} quedó sin mesero`);
+                }}
+                onError={mostrarToast}
+              />
+            </div>
 
             <div className="space-y-2 mt-3">
               {detalle.items.map((it) => (

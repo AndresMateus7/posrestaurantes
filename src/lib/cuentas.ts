@@ -1,6 +1,7 @@
 import type { MetodoPago } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { emitirEvento } from "@/lib/realtime";
+import { resolverLlamadosDeMesa } from "@/lib/llamados";
 
 export class CuentaError extends Error {
   constructor(public codigo: string, message: string) {
@@ -46,13 +47,16 @@ export async function dividirCuenta(
 
   if (payload.tipo === "partes_iguales") {
     if (payload.numeroPartes < 1) throw new CuentaError("partes_invalidas", "numeroPartes debe ser >= 1");
-    const montoPorParte = Math.round(cuenta.total / payload.numeroPartes);
+    // La ultima persona absorbe lo que sobra del redondeo: las partes suman exactamente
+    // el total (si no, ej. $25.000 entre 3 dejaba $1 sin cubrir y la cuenta no se podia cerrar).
+    const montoPorParte = Math.floor(cuenta.total / payload.numeroPartes);
+    const resto = cuenta.total - montoPorParte * payload.numeroPartes;
     await prisma.subCuenta.createMany({
       data: Array.from({ length: payload.numeroPartes }, (_, i) => ({
         cuentaId,
         tipoDivision: "partes_iguales" as const,
         etiqueta: `Persona ${i + 1}`,
-        monto: montoPorParte,
+        monto: i === payload.numeroPartes - 1 ? montoPorParte + resto : montoPorParte,
       })),
     });
   } else {
@@ -145,6 +149,9 @@ export async function registrarPago(
 export async function cerrarCuenta(restauranteId: string, cuentaId: string) {
   const cuenta = await prisma.cuenta.findUnique({ where: { id: cuentaId }, include: { pagos: true } });
   if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
+  // Si ya estaba cerrada no se vuelve a liberar la mesa: podria tener clientes nuevos.
+  if (cuenta.estado === "pagada") return;
+  if (cuenta.estado === "anulada") throw new CuentaError("cuenta_anulada", "La cuenta está anulada");
 
   const totalPagado = cuenta.pagos.reduce((acc, p) => acc + p.monto, 0);
   if (totalPagado < cuenta.total) {
@@ -157,6 +164,8 @@ export async function cerrarCuenta(restauranteId: string, cuentaId: string) {
     // la asigna quien la abra (ver src/lib/mesas.ts).
     prisma.mesa.update({ where: { id: cuenta.mesaId }, data: { estado: "libre", meseroId: null } }),
   ]);
+  // Ya cobrada: los "Piden la cuenta"/"Llaman al mesero" de esa mesa dejan de estar pendientes.
+  await resolverLlamadosDeMesa(restauranteId, cuenta.mesaId);
 
   emitirEvento(restauranteId, "mesa-actualizada", { mesaId: cuenta.mesaId, estado: "libre" });
   emitirEvento(restauranteId, "cuenta-cerrada", { cuentaId, mesaId: cuenta.mesaId });
