@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Tile } from "./Tile";
 import { formatoCOP, textoCostoInsumo } from "@/lib/precios";
+import { MOTIVO_AJUSTE_MANUAL } from "@/lib/arqueos-calculo";
 
 type Ingrediente = {
   id: string;
@@ -121,7 +122,7 @@ export function InventarioTab({ onCambio }: { onCambio: (msg: string) => void })
     await fetch(`/api/ingredientes/${ing.id}/movimientos`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tipo: delta > 0 ? "entrada" : "salida", cantidad: Math.abs(delta), motivo: "Ajuste manual desde panel" }),
+      body: JSON.stringify({ tipo: delta > 0 ? "entrada" : "salida", cantidad: Math.abs(delta), motivo: MOTIVO_AJUSTE_MANUAL }),
     });
     cargar();
     onCambio(`Stock de ${ing.nombre} actualizado`);

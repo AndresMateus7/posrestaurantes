@@ -10,7 +10,9 @@ import { MeseroPanel } from "@/components/mesero/MeseroPanel";
 import { LlamadosLista, type LlamadoPendiente } from "@/components/mesero/LlamadosLista";
 import { AsignarMesero } from "@/components/mesero/AsignarMesero";
 import { PedidosExternosTab, type PedidoExterno, type SolicitudPendiente } from "./PedidosExternosTab";
+import { ArqueoInventarioTab } from "./ArqueoInventarioTab";
 import { ICONO_SERVICIO, type TipoServicio } from "@/lib/servicio";
+import { imprimirCuenta } from "@/lib/imprimir";
 
 type TurnoResumen = {
   id: string;
@@ -119,6 +121,14 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   const [pagoMetodo, setPagoMetodo] = useState("efectivo");
   const [pagoMonto, setPagoMonto] = useState("");
   const [pagoReferencia, setPagoReferencia] = useState("");
+  // Preferencia de este equipo: imprimir el ticket apenas se salda una cuenta.
+  const [imprimirAlCobrar, setImprimirAlCobrar] = useState(() => {
+    try {
+      return window.localStorage.getItem("caja-imprimir-al-cobrar") === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const [mostrarMovimiento, setMostrarMovimiento] = useState(false);
   const [movTipo, setMovTipo] = useState<"retiro" | "ingreso_manual">("retiro");
@@ -128,7 +138,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   const [mostrarCerrarTurno, setMostrarCerrarTurno] = useState(false);
   const [montoFinalInput, setMontoFinalInput] = useState("");
 
-  const [vista, setVista] = useState<"caja" | "salon" | "externos" | "historial" | "facturas">("caja");
+  const [vista, setVista] = useState<"caja" | "salon" | "externos" | "historial" | "facturas" | "arqueo">("caja");
   // Pedidos para llevar y a domicilio en marcha (sin entregar todavia o sin cobrar).
   const [pedidosExternos, setPedidosExternos] = useState<PedidoExterno[]>([]);
   // Pedidos que los clientes mandaron por el link y esperan que caja los acepte o rechace.
@@ -143,6 +153,23 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
   function mostrarToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 2800);
+  }
+
+  async function imprimirTicket(cuentaId: string) {
+    try {
+      await imprimirCuenta(cuentaId);
+    } catch (e) {
+      mostrarToast(e instanceof Error ? e.message : "No se pudo imprimir");
+    }
+  }
+
+  function cambiarImprimirAlCobrar(activo: boolean) {
+    setImprimirAlCobrar(activo);
+    try {
+      window.localStorage.setItem("caja-imprimir-al-cobrar", activo ? "1" : "0");
+    } catch {
+      // sin almacenamiento: la preferencia vale solo mientras esta abierta la pantalla
+    }
   }
 
   const cargarTurno = useCallback(() => fetch("/api/turnos").then((r) => r.json()).then(setTurno), []);
@@ -447,7 +474,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
     setMostrarPago(false);
     // Si con este pago queda saldada, la cuenta se cierra sola y la mesa se libera.
     if (detalle.totalPagado + monto >= detalle.total) {
-      await cerrarCuentaDe(detalle.id, `${detalle.etiqueta} cobrado: ${formatoCOP(detalle.total)} — cuenta cerrada${detalle.mesaId ? ", mesa liberada" : ""}`);
+      const cuentaId = detalle.id;
+      await cerrarCuentaDe(cuentaId, `${detalle.etiqueta} cobrado: ${formatoCOP(detalle.total)} — cuenta cerrada${detalle.mesaId ? ", mesa liberada" : ""}`);
+      if (imprimirAlCobrar) await imprimirTicket(cuentaId);
       return;
     }
     cargarDetalle(detalle.id);
@@ -559,6 +588,7 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                 ["externos", "Domicilios y para llevar"],
                 ["historial", "Historial de ventas"],
                 ["facturas", "Facturas de proveedor"],
+                ["arqueo", "Arqueo de inventario"],
               ] as const
             ).map(([id, nombre]) => (
               <button
@@ -590,8 +620,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
         {vista === "externos" && (
           <PedidosExternosTab pedidos={pedidosExternos} solicitudes={solicitudes} hayTurno={!!turno} onRecargar={recargarDomicilios} onCobrar={abrirDetalleCuenta} onCambio={mostrarToast} />
         )}
-        {vista === "historial" && <HistorialVentasTab />}
+        {vista === "historial" && <HistorialVentasTab onCambio={mostrarToast} />}
         {vista === "facturas" && <FacturasProveedorTab onCambio={mostrarToast} />}
+        {vista === "arqueo" && <ArqueoInventarioTab onCambio={mostrarToast} />}
         {vista === "caja" && (
           <section>
             <h2 className="text-sm font-semibold uppercase tracking-wide opacity-60">Llamados pendientes ({llamados.length})</h2>
@@ -685,6 +716,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                     {[...new Set(c.pagos.map((p) => ETIQUETA_METODO[p.metodo] ?? p.metodo))].join(", ")}
                   </span>
                   <span className="font-bold">{formatoCOP(c.total)}</span>
+                  <button onClick={() => imprimirTicket(c.id)} title="Imprimir ticket" aria-label={`Imprimir ticket de ${c.etiqueta}`} className="text-sm border border-gray-300 rounded-full w-8 h-8 shrink-0">
+                    🖨️
+                  </button>
                 </div>
               ))}
             </div>
@@ -832,6 +866,9 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
               >
                 Cerrar cuenta
               </button>
+              <button onClick={() => imprimirTicket(detalle.id)} className="col-span-2 border border-gray-300 rounded-xl py-2.5 text-sm font-semibold">
+                🖨️ {detalle.estado === "pagada" || saldoPendiente <= 0 ? "Imprimir ticket" : "Imprimir cuenta"}
+              </button>
             </div>
           </div>
         </div>
@@ -962,6 +999,10 @@ export function CajaPanel({ restauranteNombre, usuarioId, rol }: { restauranteNo
                 <input value={pagoReferencia} onChange={(e) => setPagoReferencia(e.target.value)} className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
               </>
             )}
+            <label className="flex items-center gap-2 text-xs mt-3 cursor-pointer">
+              <input type="checkbox" checked={imprimirAlCobrar} onChange={(e) => cambiarImprimirAlCobrar(e.target.checked)} />
+              <span>🖨️ Imprimir el ticket al saldar la cuenta (en este equipo)</span>
+            </label>
             <button onClick={confirmarPago} className="w-full text-white rounded-xl py-3 font-semibold mt-4" style={{ background: "var(--color-primario)" }}>
               Confirmar pago
             </button>

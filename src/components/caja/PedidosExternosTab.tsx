@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { PedidoMesero } from "@/components/mesero/PedidoMesero";
 import { ETIQUETA_ENTREGA, ICONO_SERVICIO, type EstadoEntrega } from "@/lib/servicio";
+import { imprimirCuenta } from "@/lib/imprimir";
 
 // Pedidos para llevar y a domicilio: los saca caja. Se eligen los platos del menu como en una mesa,
 // pero sin mesa: van a cocina con el nombre del cliente y se cobran en Caja como cualquier cuenta.
@@ -243,6 +244,14 @@ export function PedidosExternosTab({
     }
   }
 
+  async function imprimir(p: PedidoExterno) {
+    try {
+      await imprimirCuenta(p.id);
+    } catch (e) {
+      onCambio(e instanceof Error ? e.message : "No se pudo imprimir");
+    }
+  }
+
   function anular(p: PedidoExterno) {
     if (!window.confirm(`¿Anular ${p.etiqueta} de ${p.clienteNombre ?? "el cliente"}? Se devuelve al inventario lo que cocina aún no había empezado.`)) return;
     accion(p, "anular", `${p.etiqueta} anulado`);
@@ -368,6 +377,9 @@ export function PedidosExternosTab({
                     + Agregar platos
                   </button>
                 )}
+                <button onClick={() => imprimir(p)} className="text-xs font-semibold border border-gray-300 rounded-full px-3 py-1.5">
+                  🖨️ Ticket
+                </button>
                 {puedeAnular && (
                   <button onClick={() => anular(p)} disabled={trabajando} className="text-xs font-semibold text-red-600 rounded-full px-3 py-1.5 disabled:opacity-40 ml-auto">
                     Anular

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { imprimirCuenta } from "@/lib/imprimir";
 
 type ItemVenta = { nombreProducto: string; cantidad: number };
 type PagoVenta = { metodo: string; monto: number; recibidoPor: string | null };
@@ -52,7 +53,7 @@ function rangoPreset(preset: Preset) {
   return { desde: isoDia(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), hasta };
 }
 
-export function HistorialVentasTab() {
+export function HistorialVentasTab({ onCambio }: { onCambio?: (msg: string) => void }) {
   const [preset, setPreset] = useState<Preset | null>("7d");
   const [desde, setDesde] = useState(() => rangoPreset("7d").desde);
   const [hasta, setHasta] = useState(() => rangoPreset("7d").hasta);
@@ -92,6 +93,16 @@ export function HistorialVentasTab() {
     a.download = `historial-ventas_${desde}_a_${hasta}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function imprimir(v: Venta) {
+    try {
+      await imprimirCuenta(v.id);
+    } catch (e) {
+      const mensaje = e instanceof Error ? e.message : "No se pudo imprimir";
+      if (onCambio) onCambio(mensaje);
+      else window.alert(mensaje);
+    }
   }
 
   const totalPeriodo = ventas?.reduce((a, v) => a + v.total, 0) ?? 0;
@@ -166,9 +177,12 @@ export function HistorialVentasTab() {
                     <td className="px-4 py-3 text-xs opacity-70">{platosVendidos} plato(s)</td>
                     <td className="px-4 py-3 font-semibold">{formatoCOP(v.total)}</td>
                     <td className="px-4 py-3 text-xs opacity-70">{v.pagos.map((p) => ETIQUETA_METODO[p.metodo] ?? p.metodo).join(" + ")}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <button onClick={() => setExpandida(expandida === v.id ? null : v.id)} className="text-xs border border-gray-300 rounded-full px-2 py-1">
                         {expandida === v.id ? "Ocultar" : "Ver"}
+                      </button>
+                      <button onClick={() => imprimir(v)} title="Imprimir ticket" aria-label={`Imprimir ticket de ${v.etiqueta}`} className="text-xs border border-gray-300 rounded-full px-2 py-1 ml-1.5">
+                        🖨️
                       </button>
                     </td>
                   </tr>

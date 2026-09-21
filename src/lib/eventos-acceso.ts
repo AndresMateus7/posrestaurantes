@@ -28,6 +28,10 @@ export async function filtrarEventoParaMesero(usuarioId: string, evento: EventoT
     case "solicitud-creada":
     case "solicitud-actualizada":
       return null;
+    // Conteos de inventario: los ven caja y administracion, no los meseros.
+    case "arqueo-enviado":
+    case "arqueo-actualizado":
+      return null;
     default:
       return evento;
   }

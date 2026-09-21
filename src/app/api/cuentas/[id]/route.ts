@@ -22,7 +22,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           orderBy: { creadoEn: "asc" },
         },
         subCuentas: { include: { items: true } },
-        pagos: { orderBy: { creadoEn: "asc" } },
+        pagos: { orderBy: { creadoEn: "asc" }, include: { usuario: { select: { nombre: true } } } },
       },
     });
     if (!cuenta || cuenta.restauranteId !== user.restauranteId) {
@@ -45,6 +45,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       costoDomicilio: cuenta.costoDomicilio,
       total: cuenta.total,
       creadoEn: cuenta.creadoEn,
+      cerradoEn: cuenta.cerradoEn,
+      // Quien recibio el ultimo pago: sale como "cajero" en el ticket.
+      cajero: cuenta.pagos.at(-1)?.usuario?.nombre ?? null,
       items: cuenta.pedidos.flatMap((p) =>
         p.items.filter((it) => it.estado !== "cancelado").map((it) => ({
           id: it.id,
@@ -64,7 +67,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         pagado: s.pagado,
         items: s.items,
       })),
-      pagos: cuenta.pagos,
+      pagos: cuenta.pagos.map(({ usuario, ...p }) => ({ ...p, recibidoPorNombre: usuario?.nombre ?? null })),
       totalPagado: cuenta.pagos.reduce((a, p) => a + p.monto, 0),
     });
   } catch (error) {

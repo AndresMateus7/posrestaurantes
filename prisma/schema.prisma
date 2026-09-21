@@ -136,6 +136,8 @@ model Restaurante {
   // `costoDomicilioBase` es el valor del domicilio que ve el cliente en el link.
   pedidosWebActivos       Boolean @default(false) @map("pedidos_web_activos")
   costoDomicilioBase      Int     @default(0) @map("costo_domicilio_base")
+  // Diseno del ticket de impresion (opciones en JSON, ver src/lib/ticket.ts). Null = valores por defecto.
+  ticketConfig            Json?   @map("ticket_config")
 
   tema          ConfiguracionTema?
   usuarios      Usuario[]
@@ -151,6 +153,7 @@ model Restaurante {
   llamados      LlamadoMesa[]
   facturasProveedor FacturaProveedor[]
   solicitudesPedido SolicitudPedido[]
+  arqueosInventario ArqueoInventario[]
 
   @@map("restaurantes")
 }
@@ -336,6 +339,7 @@ model Ingrediente {
   adicionales   Adicional[]
   movimientos   MovimientoInventario[]
   comprasFactura FacturaProveedorItem[]
+  lineasArqueo  LineaArqueoInventario[]
 
   @@unique([restauranteId, nombre])
   @@map("ingredientes")
@@ -691,4 +695,74 @@ model SolicitudPedido {
 
   @@index([restauranteId, estado])
   @@map("solicitudes_pedido")
+}
+
+// =====================================================================
+// 11. Arqueo (conteo fisico) de inventario
+// =====================================================================
+
+// pendiente = hay lineas por revisar del administrador; cerrado = ya se resolvieron todas.
+enum EstadoArqueo {
+  pendiente
+  cerrado
+}
+
+// sin_contar: la persona no escribio cantidad; confirmada: se aplico lo contado; editada: el
+// administrador cambio la cantidad; omitida: el administrador dejo el inventario como estaba.
+enum EstadoLineaArqueo {
+  pendiente
+  confirmada
+  editada
+  omitida
+  sin_contar
+}
+
+// Conteo fisico de lo que hay en bodega. Lo hace una persona a ciegas (sin ver las cantidades del
+// sistema) y lo revisa el administrador, que confirma o edita cada linea; ahi recien se ajusta el
+// stock (ver src/lib/arqueos.ts).
+model ArqueoInventario {
+  id               String   @id @default(uuid())
+  restauranteId    String   @map("restaurante_id")
+  restaurante      Restaurante @relation(fields: [restauranteId], references: [id], onDelete: Cascade)
+  numero           Int      @default(autoincrement())
+  creadoPorId      String?  @map("creado_por_id")
+  creadoPorNombre  String   @map("creado_por_nombre")
+  nota             String?
+  estado           EstadoArqueo @default(pendiente)
+  creadoEn         DateTime @default(now()) @map("creado_en")
+  cerradoEn        DateTime? @map("cerrado_en")
+  cerradoPorNombre String?  @map("cerrado_por_nombre")
+
+  lineas           LineaArqueoInventario[]
+
+  @@index([restauranteId, estado])
+  @@index([restauranteId, creadoEn])
+  @@map("arqueos_inventario")
+}
+
+model LineaArqueoInventario {
+  id            String   @id @default(uuid())
+  arqueoId      String   @map("arqueo_id")
+  arqueo        ArqueoInventario @relation(fields: [arqueoId], references: [id], onDelete: Cascade)
+  ingredienteId String?  @map("ingrediente_id")
+  ingrediente   Ingrediente? @relation(fields: [ingredienteId], references: [id], onDelete: SetNull)
+  // Datos del insumo al momento del conteo (si despues se renombra o se borra, el informe no cambia).
+  nombre        String
+  unidadMedida  String   @map("unidad_medida")
+  ubicacion     String?
+  esProducto    Boolean  @default(false) @map("es_producto")
+  costoUnidad   Float    @default(0) @map("costo_unidad")
+  stockMinimo   Decimal  @default(0) @db.Decimal(10, 2) @map("stock_minimo")
+  // Lo que decia el sistema al enviar el conteo y lo que conto la persona (null = sin contar).
+  esperado      Decimal  @db.Decimal(10, 2)
+  contado       Decimal? @db.Decimal(10, 2)
+  estado        EstadoLineaArqueo @default(pendiente)
+  // Lo que dejo el administrador y el ajuste que realmente se aplico al stock.
+  cantidadFinal Decimal? @db.Decimal(10, 2) @map("cantidad_final")
+  ajuste        Decimal? @db.Decimal(10, 2)
+  resueltoEn    DateTime? @map("resuelto_en")
+
+  @@index([arqueoId])
+  @@index([ingredienteId])
+  @@map("lineas_arqueo_inventario")
 }
