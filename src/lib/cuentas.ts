@@ -1,7 +1,8 @@
-import type { MetodoPago } from "@prisma/client";
+import type { MetodoPago, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { emitirEvento } from "@/lib/realtime";
 import { resolverLlamadosDeMesa } from "@/lib/llamados";
+import { bloquearCuenta, bloquearMesa, conReintentos } from "@/lib/transacciones";
 
 export class CuentaError extends Error {
   constructor(public codigo: string, message: string) {
@@ -9,27 +10,50 @@ export class CuentaError extends Error {
   }
 }
 
+const formatoCOP = (v: number) => "$" + v.toLocaleString("es-CO");
+
 /** Reutiliza la cuenta abierta (o dividida, aun sin pagar) de la mesa si existe, o crea una nueva. */
 export async function obtenerOCrearCuentaAbierta(restauranteId: string, mesaId: string) {
-  const existente = await prisma.cuenta.findFirst({ where: { mesaId, estado: { in: ["abierta", "dividida"] } } });
-  if (existente) return existente;
-  return prisma.cuenta.create({ data: { restauranteId, mesaId, estado: "abierta" } });
+  return conReintentos(() =>
+    prisma.$transaction(async (tx) => {
+      await bloquearMesa(tx, mesaId);
+      const existente = await tx.cuenta.findFirst({ where: { mesaId, estado: { in: ["abierta", "dividida"] } } });
+      return existente ?? tx.cuenta.create({ data: { restauranteId, mesaId, estado: "abierta" } });
+    })
+  );
+}
+
+/**
+ * Recalcula subtotal/total con los platos (no cancelados) y adicionales de la cuenta, en UNA sentencia
+ * dentro de la transaccion que llama: asi el total nunca queda con una foto vieja aunque lleguen varios
+ * pedidos a la vez. La transaccion debe tener la cuenta bloqueada (o recien creada).
+ */
+export async function recalcularCuentaTx(tx: Prisma.TransactionClient, cuentaId: string) {
+  await tx.$executeRaw`
+    UPDATE "cuentas" c
+    SET "subtotal" = s.v, "total" = s.v + c."propina" + c."costo_domicilio"
+    FROM (
+      SELECT COALESCE(SUM(i."precio_unitario" * i."cantidad" + COALESCE(ad.v, 0)), 0)::int AS v
+      FROM "items_pedido" i
+      JOIN "pedidos" p ON p."id" = i."pedido_id"
+      LEFT JOIN (
+        SELECT "item_pedido_id", SUM("precio_unitario" * "cantidad") AS v FROM "item_pedido_adicionales" GROUP BY 1
+      ) ad ON ad."item_pedido_id" = i."id"
+      WHERE p."cuenta_id" = ${cuentaId} AND i."estado" <> 'cancelado'
+    ) s
+    WHERE c."id" = ${cuentaId}`;
+  return tx.cuenta.findUniqueOrThrow({ where: { id: cuentaId } });
 }
 
 /** Recalcula subtotal/total sumando todos los pedidos ligados a la cuenta. */
 export async function recalcularCuenta(cuentaId: string) {
-  const cuenta = await prisma.cuenta.findUniqueOrThrow({ where: { id: cuentaId } });
-  const items = await prisma.itemPedido.findMany({
-    where: { estado: { not: "cancelado" }, pedido: { cuentaId } },
-    include: { adicionales: true },
-  });
-  const subtotal = items.reduce((acc, it) => {
-    const extras = it.adicionales.reduce((a, ad) => a + ad.precioUnitario * ad.cantidad, 0);
-    return acc + it.precioUnitario * it.cantidad + extras;
-  }, 0);
-  const total = subtotal + cuenta.propina + cuenta.costoDomicilio;
-  const actualizada = await prisma.cuenta.update({ where: { id: cuentaId }, data: { subtotal, total } });
-  emitirEvento(cuenta.restauranteId, "cuenta-actualizada", { cuentaId });
+  const actualizada = await conReintentos(() =>
+    prisma.$transaction(async (tx) => {
+      await bloquearCuenta(tx, cuentaId);
+      return recalcularCuentaTx(tx, cuentaId);
+    })
+  );
+  emitirEvento(actualizada.restauranteId, "cuenta-actualizada", { cuentaId });
   return actualizada;
 }
 
@@ -101,71 +125,114 @@ export async function dividirCuenta(
 }
 
 export async function registrarPropina(restauranteId: string, cuentaId: string, valor: { monto?: number; porcentaje?: number }) {
-  const cuenta = await prisma.cuenta.findUnique({ where: { id: cuentaId } });
-  if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
-
-  const propina = valor.porcentaje != null ? Math.round(cuenta.subtotal * (valor.porcentaje / 100)) : Math.round(valor.monto ?? 0);
-  const actualizada = await prisma.cuenta.update({ where: { id: cuentaId }, data: { propina, total: cuenta.subtotal + propina + cuenta.costoDomicilio } });
+  const actualizada = await conReintentos(() =>
+    prisma.$transaction(async (tx) => {
+      await bloquearCuenta(tx, cuentaId);
+      const cuenta = await tx.cuenta.findUnique({ where: { id: cuentaId } });
+      if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
+      if (cuenta.estado === "pagada" || cuenta.estado === "anulada") throw new CuentaError("cuenta_cerrada", "La cuenta ya está cerrada");
+      const propina = valor.porcentaje != null ? Math.round(cuenta.subtotal * (valor.porcentaje / 100)) : Math.round(valor.monto ?? 0);
+      if (!(propina >= 0)) throw new CuentaError("propina_invalida", "La propina no puede ser negativa");
+      return tx.cuenta.update({ where: { id: cuentaId }, data: { propina, total: cuenta.subtotal + propina + cuenta.costoDomicilio } });
+    })
+  );
   emitirEvento(restauranteId, "cuenta-actualizada", { cuentaId });
   return actualizada;
 }
 
+/**
+ * Registra un pago con la cuenta bloqueada: dos cajeros (o un doble clic) sobre la misma cuenta se
+ * atienden uno detras del otro, y el segundo ve lo que ya se pago. No se acepta pagar una cuenta
+ * cerrada, pagar mas de lo que falta (de la cuenta o de la parte dividida) ni cobrar sin turno abierto:
+ * todo pago debe quedar en un turno para que el arqueo lo cuente.
+ */
 export async function registrarPago(
   restauranteId: string,
   cuentaId: string,
   data: { metodo: MetodoPago; monto: number; referenciaTransaccion?: string; subCuentaId?: string },
   usuarioId: string
 ) {
-  const cuenta = await prisma.cuenta.findUnique({ where: { id: cuentaId } });
-  if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
-  if (data.monto <= 0) throw new CuentaError("monto_invalido", "El monto debe ser mayor a 0");
+  const monto = Math.round(data.monto);
+  if (!(monto > 0)) throw new CuentaError("monto_invalido", "El monto debe ser mayor a 0");
 
   const turno = await prisma.turnoCaja.findFirst({ where: { restauranteId, usuarioId, estado: "abierto" } });
+  if (!turno) throw new CuentaError("sin_turno", "Abre tu turno de caja antes de cobrar");
 
-  const pago = await prisma.pago.create({
-    data: {
-      cuentaId,
-      subCuentaId: data.subCuentaId,
-      metodo: data.metodo,
-      monto: data.monto,
-      referenciaTransaccion: data.referenciaTransaccion,
-      recibidoPor: usuarioId,
-      turnoId: turno?.id,
-    },
-  });
+  const pago = await conReintentos(() =>
+    prisma.$transaction(async (tx) => {
+      await bloquearCuenta(tx, cuentaId);
+      const cuenta = await tx.cuenta.findUnique({ where: { id: cuentaId }, include: { pagos: { select: { monto: true, subCuentaId: true } } } });
+      if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
+      if (cuenta.estado === "pagada") throw new CuentaError("cuenta_pagada", "Esta cuenta ya está cobrada");
+      if (cuenta.estado === "anulada") throw new CuentaError("cuenta_anulada", "La cuenta está anulada");
 
-  if (data.subCuentaId) {
-    const subCuenta = await prisma.subCuenta.findUnique({ where: { id: data.subCuentaId } });
-    const pagosSubCuenta = await prisma.pago.aggregate({ where: { subCuentaId: data.subCuentaId }, _sum: { monto: true } });
-    if (subCuenta && (pagosSubCuenta._sum.monto ?? 0) >= subCuenta.monto) {
-      await prisma.subCuenta.update({ where: { id: data.subCuentaId }, data: { pagado: true } });
-    }
-  }
+      const pendiente = cuenta.total - cuenta.pagos.reduce((a, p) => a + p.monto, 0);
+      if (pendiente <= 0) throw new CuentaError("cuenta_saldada", "Esta cuenta ya está saldada");
+      if (monto > pendiente) throw new CuentaError("pago_excede", `El pago supera lo que falta por cobrar (${formatoCOP(pendiente)})`);
+
+      let subCuentaSaldada = false;
+      if (data.subCuentaId) {
+        const sub = await tx.subCuenta.findUnique({ where: { id: data.subCuentaId } });
+        if (!sub || sub.cuentaId !== cuentaId) throw new CuentaError("subcuenta_no_existe", "Esa parte no pertenece a la cuenta");
+        const faltaSub = sub.monto - cuenta.pagos.filter((p) => p.subCuentaId === sub.id).reduce((a, p) => a + p.monto, 0);
+        if (faltaSub <= 0) throw new CuentaError("subcuenta_pagada", `${sub.etiqueta} ya pagó su parte`);
+        if (monto > faltaSub) throw new CuentaError("pago_excede", `El pago supera lo que le falta a ${sub.etiqueta} (${formatoCOP(faltaSub)})`);
+        subCuentaSaldada = monto === faltaSub;
+      }
+
+      const creado = await tx.pago.create({
+        data: {
+          cuentaId,
+          subCuentaId: data.subCuentaId,
+          metodo: data.metodo,
+          monto,
+          referenciaTransaccion: data.referenciaTransaccion,
+          recibidoPor: usuarioId,
+          turnoId: turno.id,
+        },
+      });
+      if (subCuentaSaldada) await tx.subCuenta.update({ where: { id: data.subCuentaId }, data: { pagado: true } });
+      return creado;
+    })
+  );
 
   emitirEvento(restauranteId, "cuenta-actualizada", { cuentaId });
   return pago;
 }
 
+/**
+ * Cierra la cuenta ya pagada y libera la mesa. Bloquea mesa y cuenta (en ese orden, igual que al crear un
+ * pedido) y recalcula el total con los platos reales: si justo entro un pedido, el cierre ve que falta
+ * cobrarlo y no cierra; si el pedido llega despues, encuentra la cuenta cerrada y abre una nueva.
+ */
 export async function cerrarCuenta(restauranteId: string, cuentaId: string) {
-  const cuenta = await prisma.cuenta.findUnique({ where: { id: cuentaId }, include: { pagos: true } });
-  if (!cuenta || cuenta.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
-  // Si ya estaba cerrada no se vuelve a liberar la mesa: podria tener clientes nuevos.
-  if (cuenta.estado === "pagada") return;
-  if (cuenta.estado === "anulada") throw new CuentaError("cuenta_anulada", "La cuenta está anulada");
+  const previa = await prisma.cuenta.findUnique({ where: { id: cuentaId }, select: { restauranteId: true, mesaId: true } });
+  if (!previa || previa.restauranteId !== restauranteId) throw new CuentaError("cuenta_no_existe", "Cuenta no existe");
+  const { mesaId } = previa;
 
-  const totalPagado = cuenta.pagos.reduce((acc, p) => acc + p.monto, 0);
-  if (totalPagado < cuenta.total) {
-    throw new CuentaError("pago_incompleto", `Faltan ${cuenta.total - totalPagado} por pagar`);
-  }
+  const cerrada = await conReintentos(() =>
+    prisma.$transaction(async (tx) => {
+      if (mesaId) await bloquearMesa(tx, mesaId);
+      await bloquearCuenta(tx, cuentaId);
+      const actual = await tx.cuenta.findUniqueOrThrow({ where: { id: cuentaId }, select: { estado: true } });
+      // Si ya estaba cerrada no se vuelve a liberar la mesa: podria tener clientes nuevos.
+      if (actual.estado === "pagada") return false;
+      if (actual.estado === "anulada") throw new CuentaError("cuenta_anulada", "La cuenta está anulada");
 
-  const { mesaId } = cuenta;
-  await prisma.$transaction([
-    prisma.cuenta.update({ where: { id: cuentaId }, data: { estado: "pagada", cerradoEn: new Date() } }),
-    // Al liberar la mesa tambien se libera al mesero: la siguiente ocupacion
-    // la asigna quien la abra (ver src/lib/mesas.ts). Los pedidos para llevar /
-    // domicilio no tienen mesa.
-    ...(mesaId ? [prisma.mesa.update({ where: { id: mesaId }, data: { estado: "libre" as const, meseroId: null } })] : []),
-  ]);
+      const cuenta = await recalcularCuentaTx(tx, cuentaId);
+      const pagado = (await tx.pago.aggregate({ where: { cuentaId }, _sum: { monto: true } }))._sum.monto ?? 0;
+      if (pagado < cuenta.total) throw new CuentaError("pago_incompleto", `Faltan ${formatoCOP(cuenta.total - pagado)} por pagar`);
+
+      await tx.cuenta.update({ where: { id: cuentaId }, data: { estado: "pagada", cerradoEn: new Date() } });
+      // Al liberar la mesa tambien se libera al mesero: la siguiente ocupacion
+      // la asigna quien la abra (ver src/lib/mesas.ts). Los pedidos para llevar /
+      // domicilio no tienen mesa.
+      if (mesaId) await tx.mesa.update({ where: { id: mesaId }, data: { estado: "libre", meseroId: null } });
+      return true;
+    })
+  );
+  if (!cerrada) return;
+
   if (mesaId) {
     // Ya cobrada: los "Piden la cuenta"/"Llaman al mesero" de esa mesa dejan de estar pendientes.
     await resolverLlamadosDeMesa(restauranteId, mesaId);

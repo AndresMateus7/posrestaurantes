@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { OcupadoError } from "@/lib/transacciones";
 import { crearPedido, PedidoError, esErrorDePrisma, type ItemCarrito } from "@/lib/pedidos";
 
 type Body = { qrToken?: string; items?: ItemCarrito[] };
@@ -21,6 +22,7 @@ export async function POST(req: Request) {
       const status = error.codigo === "producto_agotado" || error.codigo === "mesa_cerrada" ? 409 : 400;
       return NextResponse.json({ error: error.message, codigo: error.codigo }, { status });
     }
+    if (error instanceof OcupadoError) return NextResponse.json({ error: error.message, codigo: error.codigo }, { status: 409 });
     if (esErrorDePrisma(error) && error.code === "P2000") {
       return NextResponse.json({ error: "Stock insuficiente, intenta de nuevo" }, { status: 409 });
     }

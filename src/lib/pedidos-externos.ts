@@ -1,8 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { emitirEvento } from "@/lib/realtime";
-import { recalcularCuenta } from "@/lib/cuentas";
-import { agregarItems, emitirPedidoCreado, entregarItems, PedidoError, type ItemCarrito } from "@/lib/pedidos";
+import { recalcularCuentaTx } from "@/lib/cuentas";
+import { agregarItems, emitirPedidoCreado, entregarItems, moverStock, PedidoError, type ItemCarrito } from "@/lib/pedidos";
+import { bloquearCuenta, conReintentos, OcupadoError } from "@/lib/transacciones";
 import { estadoEntrega, etiquetaConCliente, etiquetaServicio, type TipoServicio } from "@/lib/servicio";
 
 // Pedidos para llevar y a domicilio: los saca caja, sin mesa. Cada uno es una cuenta propia (con el
@@ -56,21 +57,12 @@ export async function crearPedidoExterno(
   if (items.length === 0) throw new PedidoError("carrito_vacio", "El pedido no tiene items");
 
   const dia = formatoDiaBogota.format(new Date());
-  const { cuentaId, pedidoId } = await prisma.$transaction(
+  const { cuenta, pedidoId } = await conReintentos(() => prisma.$transaction(
     async (tx) => {
-      // Consecutivo del dia, en una sola sentencia para que dos cajeros a la vez nunca reciban el mismo numero.
-      const [{ numero }] = await tx.$queryRaw<{ numero: number }[]>`
-        UPDATE "restaurantes"
-        SET "contador_pedidos_externos" = CASE WHEN "contador_dia" = ${dia} THEN "contador_pedidos_externos" + 1 ELSE 1 END,
-            "contador_dia" = ${dia}
-        WHERE "id" = ${restauranteId}
-        RETURNING "contador_pedidos_externos" AS numero`;
-
       const cuenta = await tx.cuenta.create({
         data: {
           restauranteId,
           tipo: datos.tipo,
-          numero,
           clienteNombre: nombre,
           clienteTelefono: texto(datos.clienteTelefono),
           direccion: datos.tipo === "domicilio" ? texto(datos.direccion) : null,
@@ -81,36 +73,54 @@ export async function crearPedidoExterno(
         },
       });
       const pedido = await tx.pedido.create({ data: { restauranteId, cuentaId: cuenta.id, origen: opciones.origen ?? "mostrador", estado: "recibido" } });
-      await agregarItems(tx, restauranteId, pedido.id, items);
+      const descontarStock = await agregarItems(tx, restauranteId, pedido.id, items);
       await opciones.alCrear?.(tx, cuenta.id);
-      return { cuentaId: cuenta.id, pedidoId: pedido.id };
+      await recalcularCuentaTx(tx, cuenta.id);
+      await descontarStock();
+
+      // Consecutivo del dia, en una sola sentencia para que dos cajeros a la vez nunca reciban el mismo
+      // numero. Va al final: la fila del restaurante queda bloqueada solo hasta que termina la transaccion,
+      // asi los pedidos de caja y del link no hacen fila unos detras de otros mientras se arman.
+      const [{ numero }] = await tx.$queryRaw<{ numero: number }[]>`
+        UPDATE "restaurantes"
+        SET "contador_pedidos_externos" = CASE WHEN "contador_dia" = ${dia} THEN "contador_pedidos_externos" + 1 ELSE 1 END,
+            "contador_dia" = ${dia}
+        WHERE "id" = ${restauranteId}
+        RETURNING "contador_pedidos_externos" AS numero`;
+      return { cuenta: await tx.cuenta.update({ where: { id: cuenta.id }, data: { numero } }), pedidoId: pedido.id };
     },
     { timeout: 20000 }
-  );
+  ));
 
-  const cuenta = await recalcularCuenta(cuentaId);
+  emitirEvento(restauranteId, "cuenta-actualizada", { cuentaId: cuenta.id });
   await avisarPedidoNuevo(restauranteId, pedidoId, cuenta);
-  return { cuentaId, pedidoId, numero: cuenta.numero! };
+  return { cuentaId: cuenta.id, pedidoId, numero: cuenta.numero! };
 }
 
 /** Agrega otro pedido (mas platos) a un pedido para llevar / domicilio que sigue abierto. */
 export async function agregarPedidoAExterno(restauranteId: string, cuentaId: string, items: ItemCarrito[]) {
   if (items.length === 0) throw new PedidoError("carrito_vacio", "El pedido no tiene items");
-  const existente = await buscarExterno(restauranteId, cuentaId);
-  if (existente.estado !== "abierta" && existente.estado !== "dividida") {
-    throw new PedidoExternoError("cuenta_cerrada", "Ese pedido ya está cobrado o anulado: crea uno nuevo");
-  }
+  await buscarExterno(restauranteId, cuentaId);
 
-  const pedidoId = await prisma.$transaction(
+  // Con la cuenta bloqueada: si caja la esta cobrando o anulando en este momento, se espera y se
+  // revisa el estado ya actualizado (no caen platos en un pedido cobrado).
+  const { cuenta, pedidoId } = await conReintentos(() => prisma.$transaction(
     async (tx) => {
+      await bloquearCuenta(tx, cuentaId);
+      const actual = await tx.cuenta.findUniqueOrThrow({ where: { id: cuentaId }, select: { estado: true } });
+      if (actual.estado !== "abierta" && actual.estado !== "dividida") {
+        throw new PedidoExternoError("cuenta_cerrada", "Ese pedido ya está cobrado o anulado: crea uno nuevo");
+      }
       const pedido = await tx.pedido.create({ data: { restauranteId, cuentaId, origen: "mostrador", estado: "recibido" } });
-      await agregarItems(tx, restauranteId, pedido.id, items);
-      return pedido.id;
+      const descontarStock = await agregarItems(tx, restauranteId, pedido.id, items);
+      const cuenta = await recalcularCuentaTx(tx, cuentaId);
+      await descontarStock();
+      return { cuenta, pedidoId: pedido.id };
     },
     { timeout: 20000 }
-  );
+  ));
 
-  const cuenta = await recalcularCuenta(cuentaId);
+  emitirEvento(restauranteId, "cuenta-actualizada", { cuentaId });
   await avisarPedidoNuevo(restauranteId, pedidoId, cuenta);
   return { pedidoId };
 }
@@ -170,49 +180,58 @@ export async function entregarExterno(restauranteId: string, cuentaId: string) {
  * hizo de verdad, no se devuelve).
  */
 export async function anularExterno(restauranteId: string, cuentaId: string) {
-  const cuenta = await prisma.cuenta.findUnique({
-    where: { id: cuentaId },
-    include: {
-      pagos: { select: { monto: true } },
-      pedidos: {
-        include: {
-          items: { include: { producto: { include: { ingredientes: true } }, adicionales: { include: { adicional: true } } } },
-        },
-      },
-    },
-  });
-  if (!cuenta || cuenta.restauranteId !== restauranteId || cuenta.tipo === "mesa") throw new PedidoExternoError("pedido_no_existe", "El pedido no existe");
-  if (cuenta.estado !== "abierta" && cuenta.estado !== "dividida") throw new PedidoExternoError("cuenta_cerrada", "Ese pedido ya está cobrado o anulado");
-  if (cuenta.pagos.length > 0) throw new PedidoExternoError("tiene_pagos", "Ya tiene pagos registrados: no se puede anular");
-  const items = cuenta.pedidos.flatMap((p) => p.items).filter((i) => i.estado !== "cancelado");
-  if (cuenta.despachadoEn || items.some((i) => i.estado === "entregado")) {
-    throw new PedidoExternoError("ya_entregado", "Ese pedido ya salió o se entregó: no se puede anular");
-  }
+  // Todo con la cuenta bloqueada (un cobro o un "agregar platos" simultaneo espera): las validaciones
+  // se hacen sobre el estado ya actualizado.
+  await conReintentos(() =>
+    prisma.$transaction(
+      async (tx) => {
+        await bloquearCuenta(tx, cuentaId);
+        const cuenta = await tx.cuenta.findUnique({
+          where: { id: cuentaId },
+          include: {
+            pagos: { select: { monto: true } },
+            pedidos: {
+              include: {
+                items: { include: { producto: { include: { ingredientes: true } }, adicionales: { include: { adicional: true } } } },
+              },
+            },
+          },
+        });
+        if (!cuenta || cuenta.restauranteId !== restauranteId || cuenta.tipo === "mesa") throw new PedidoExternoError("pedido_no_existe", "El pedido no existe");
+        if (cuenta.estado !== "abierta" && cuenta.estado !== "dividida") throw new PedidoExternoError("cuenta_cerrada", "Ese pedido ya está cobrado o anulado");
+        if (cuenta.pagos.length > 0) throw new PedidoExternoError("tiene_pagos", "Ya tiene pagos registrados: no se puede anular");
+        const items = cuenta.pedidos.flatMap((p) => p.items).filter((i) => i.estado !== "cancelado");
+        if (cuenta.despachadoEn || items.some((i) => i.estado === "entregado")) {
+          throw new PedidoExternoError("ya_entregado", "Ese pedido ya salió o se entregó: no se puede anular");
+        }
 
-  await prisma.$transaction(
-    async (tx) => {
-      for (const it of items) {
-        if (it.estado === "pendiente") {
+        // Se cancelan primero los que siguen pendientes, con la condicion en el UPDATE: si cocina justo
+        // empezo uno, ese ya no cuenta como pendiente y no se devuelve al inventario.
+        const ids = items.map((i) => i.id);
+        const pendientes = new Set(
+          (await tx.$queryRaw<{ id: string }[]>`
+            UPDATE "items_pedido" SET "estado" = 'cancelado'
+            WHERE "id" = ANY(${ids}::text[]) AND "estado" = 'pendiente' RETURNING "id"`).map((r) => r.id)
+        );
+        await tx.itemPedido.updateMany({ where: { id: { in: ids } }, data: { estado: "cancelado" } });
+
+        const devolver = new Map<string, { cantidad: number }>();
+        const sumar = (id: string, v: number) => devolver.set(id, { cantidad: (devolver.get(id)?.cantidad ?? 0) + v });
+        for (const it of items) {
+          if (!pendientes.has(it.id)) continue;
           const removidos = new Set(it.ingredientesRemovidos as string[]);
-          for (const pi of it.producto.ingredientes) {
-            if (removidos.has(pi.ingredienteId)) continue;
-            await tx.ingrediente.update({ where: { id: pi.ingredienteId }, data: { stockActual: { increment: pi.cantidadUsada.toNumber() * it.cantidad } } });
-          }
+          for (const pi of it.producto.ingredientes) if (!removidos.has(pi.ingredienteId)) sumar(pi.ingredienteId, pi.cantidadUsada.toNumber() * it.cantidad);
           for (const ad of it.adicionales) {
-            if (ad.adicional.ingredienteId && ad.adicional.cantidadUsada) {
-              await tx.ingrediente.update({
-                where: { id: ad.adicional.ingredienteId },
-                data: { stockActual: { increment: ad.adicional.cantidadUsada.toNumber() * it.cantidad } },
-              });
-            }
+            if (ad.adicional.ingredienteId && ad.adicional.cantidadUsada) sumar(ad.adicional.ingredienteId, ad.adicional.cantidadUsada.toNumber() * it.cantidad);
           }
         }
-        await tx.itemPedido.update({ where: { id: it.id }, data: { estado: "cancelado" } });
-      }
-      await tx.pedido.updateMany({ where: { cuentaId }, data: { estado: "cancelado" } });
-      await tx.cuenta.update({ where: { id: cuentaId }, data: { estado: "anulada", cerradoEn: new Date() } });
-    },
-    { timeout: 20000 }
+        await moverStock(tx, devolver);
+
+        await tx.pedido.updateMany({ where: { cuentaId }, data: { estado: "cancelado" } });
+        await tx.cuenta.update({ where: { id: cuentaId }, data: { estado: "anulada", cerradoEn: new Date() } });
+      },
+      { timeout: 20000 }
+    )
   );
 
   // Cocina saca de su pantalla los platos cancelados.
@@ -269,6 +288,7 @@ export async function listarPedidosExternos(restauranteId: string) {
 
 /** Convierte los errores de pedidos (agotado, ya entregado...) en respuesta HTTP; null si es otro tipo de error. */
 export function errorDePedido(error: unknown): { status: number; body: { error: string; codigo: string } } | null {
+  if (error instanceof OcupadoError) return { status: 409, body: { error: error.message, codigo: error.codigo } };
   if (!(error instanceof PedidoExternoError) && !(error instanceof PedidoError)) return null;
   const conflicto = ["producto_agotado", "no_esta_listo", "ya_despachado", "ya_entregado", "cuenta_cerrada", "tiene_pagos", "anulado"];
   const status = error.codigo === "pedido_no_existe" ? 404 : conflicto.includes(error.codigo) ? 409 : 400;

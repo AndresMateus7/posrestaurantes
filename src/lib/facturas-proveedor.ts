@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { conReintentos } from "@/lib/transacciones";
 import { emitirEvento } from "@/lib/realtime";
 import { calcularImpacto, valorInventario } from "@/lib/costos";
 
@@ -46,11 +47,15 @@ export async function registrarFacturaProveedor(
   const valorAntes = await valorInventario(restauranteId);
   const costosAntes = new Map<string, number>();
 
-  const facturaId = await prisma.$transaction(async (tx) => {
+  // Siempre en el mismo orden (por insumo) y reintentando si choca con un pedido que descuenta lo mismo.
+  lineas.sort((a, b) => (a.ingredienteId < b.ingredienteId ? -1 : a.ingredienteId > b.ingredienteId ? 1 : 0));
+  const facturaId = await conReintentos(() => prisma.$transaction(async (tx) => {
     const itemsData: { ingredienteId: string; cantidad: number; costoUnitario: number; costoPorUnidad: number; subtotal: number }[] = [];
     let total = 0;
 
     for (const it of lineas) {
+      // Bloqueado: el costo promedio se calcula con el stock real del momento (un pedido simultaneo espera).
+      await tx.$queryRaw`SELECT "id" FROM "ingredientes" WHERE "id" = ${it.ingredienteId} FOR UPDATE`;
       const ingrediente = await tx.ingrediente.findUnique({ where: { id: it.ingredienteId } });
       if (!ingrediente || ingrediente.restauranteId !== restauranteId) {
         throw new FacturaProveedorError("ingrediente_no_existe", `Ingrediente ${it.ingredienteId} no existe`);
@@ -94,7 +99,7 @@ export async function registrarFacturaProveedor(
       },
     });
     return factura.id;
-  });
+  }));
 
   for (const it of lineas) {
     const actualizado = await prisma.ingrediente.findUniqueOrThrow({ where: { id: it.ingredienteId } });

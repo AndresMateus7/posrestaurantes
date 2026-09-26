@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import type { RolUsuario } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
+import { OcupadoError } from "@/lib/transacciones";
 
 export class ApiAuthError extends Error {
   constructor(public status: number, message: string) {
@@ -26,6 +27,9 @@ export async function requireApiUser(...rolesPermitidos: RolUsuario[]) {
 export function apiErrorResponse(error: unknown) {
   if (error instanceof ApiAuthError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  if (error instanceof OcupadoError) {
+    return NextResponse.json({ error: error.message, codigo: error.codigo }, { status: 409 });
   }
   if (error instanceof Error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
